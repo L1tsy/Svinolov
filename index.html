@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Свинолов — 2D игра</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <!-- Холст Canvas -->
+        <canvas id="game-canvas"></canvas>
+
+        <!-- Верхняя панель HUD -->
+        <header id="hud">
+            <div class="hud-card" title="Текущий игровой день">
+                <span class="icon">📅</span>
+                <span>День: <strong id="day-number">1</strong></span>
+            </div>
+
+            <div class="hud-card" title="Осталось поймать свиней в этот день">
+                <span class="icon">🐷</span>
+                <span>Осталось: <strong id="pigs-left">0 / 0</strong></span>
+            </div>
+
+            <div class="hud-card" title="Накопленные золотые монеты">
+                <span class="icon">🪙</span>
+                <span id="coin-count">0</span>
+            </div>
+
+            <!-- Кнопка найма напарника (с 10 уровня за 100 монет) -->
+            <button id="btn-buy-helper" class="hud-card btn-helper locked" title="Нанять напарника-ловца">
+                <span id="helper-icon" class="icon">🔒</span>
+                <span id="helper-btn-text">Напарник (10 дн.)</span>
+            </button>
+
+            <button id="btn-reset" class="btn-icon" title="Сбросить прогресс">🔄</button>
+        </header>
+
+        <!-- Подсказка управления на ПК -->
+        <div id="controls-hint">
+            ⌨️ <strong>WASD</strong> — бег • <strong>ЛКМ</strong> или <strong>Пробел</strong> — поймать свинью в кружок (кулдаун 1 сек)
+        </div>
+
+        <!-- Виртуальный контроллер для мобильных устройств -->
+        <div id="mobile-controls">
+            <!-- Виртуальный D-Pad слева -->
+            <div class="dpad-container">
+                <button class="dpad-btn dpad-up" data-dir="up">▲</button>
+                <button class="dpad-btn dpad-left" data-dir="left">◀</button>
+                <button class="dpad-btn dpad-down" data-dir="down">▼</button>
+                <button class="dpad-btn dpad-right" data-dir="right">▶</button>
+                <div class="dpad-center"></div>
+            </div>
+
+            <!-- Кнопка взмаха сачком справа -->
+            <button id="btn-touch-catch" class="touch-action-btn" title="Поймать в упор">
+                <span class="touch-action-icon">🕸️</span>
+                <span class="touch-action-text">Поймать</span>
+            </button>
+        </div>
+
+        <!-- Модальное окно завершения дня -->
+        <div id="day-complete-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+                <h2 class="modal-title">🎉 День завершён!</h2>
+                <p id="day-summary-text" class="modal-desc">
+                    Все сбежавшие свиньи пойманы и надёжно заперты в амбаре!
+                </p>
+                <button id="btn-next-day" class="btn-primary">Начать следующий день ➜</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Подключение скриптов в строгом порядке зависимостей -->
+    <script src="js/storage.js"></script>
+    <script src="js/player.js"></script>
+    <script src="js/helper.js"></script>
+    <script src="js/pig.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/game.js"></script>
+</body>
+</html>

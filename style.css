@@ -1,0 +1,418 @@
+/* Сброс стилей и общие настройки */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: #166534;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+}
+
+#game-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+/* Холст игры */
+#game-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    cursor: default;
+}
+
+/* Верхняя панель HUD */
+#hud {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* Карточки показателей */
+.hud-card {
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    padding: 8px 16px;
+    border-radius: 9999px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 2px solid #e2e8f0;
+    color: #1e293b;
+    font-weight: 700;
+    font-size: 15px;
+    pointer-events: auto;
+    transition: transform 0.15s ease;
+}
+
+.hud-card .icon {
+    font-size: 18px;
+}
+
+.hud-card span {
+    color: #0f172a;
+}
+
+#coin-count {
+    color: #b45309;
+    font-size: 17px;
+}
+
+/* Кнопка напарника */
+.btn-helper {
+    cursor: pointer;
+    border: 2px solid #cbd5e1;
+    transition: all 0.2s ease;
+    background: #ffffff;
+}
+
+.btn-helper.locked {
+    opacity: 0.6;
+    background: #f1f5f9;
+    cursor: not-allowed;
+    border-color: #cbd5e1;
+    color: #64748b;
+}
+
+.btn-helper.ready {
+    background: linear-gradient(135deg, #fef08a, #fde047);
+    border-color: #eab308;
+    color: #854d0e;
+    cursor: pointer;
+    box-shadow: 0 0 12px rgba(234, 179, 8, 0.4);
+    animation: pulse 1.8s infinite;
+}
+
+.btn-helper.ready:hover {
+    transform: scale(1.05);
+}
+
+.btn-helper.active {
+    background: #dcfce7;
+    border-color: #22c55e;
+    color: #15803d;
+    cursor: default;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.04); }
+    100% { transform: scale(1); }
+}
+
+/* Кнопка сброса прогресса в углу */
+.btn-icon {
+    background: rgba(255, 255, 255, 0.88);
+    border: 2px solid #cbd5e1;
+    border-radius: 9999px;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.2s ease;
+    pointer-events: auto;
+}
+
+.btn-icon:hover {
+    background: #fee2e2;
+    border-color: #f87171;
+    transform: rotate(90deg);
+}
+
+/* Подсказка управления внизу экрана */
+#controls-hint {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.75);
+    color: #ffffff;
+    padding: 8px 18px;
+    border-radius: 9999px;
+    font-size: 13px;
+    font-weight: 600;
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    pointer-events: none;
+    z-index: 10;
+    white-space: nowrap;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+/* Мобильный блок управления (D-Pad + Сачок) */
+#mobile-controls {
+    position: absolute;
+    bottom: 24px;
+    left: 20px;
+    right: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    pointer-events: none;
+    z-index: 20;
+}
+
+/* Виртуальный D-Pad */
+.dpad-container {
+    position: relative;
+    width: 140px;
+    height: 140px;
+    pointer-events: auto;
+    opacity: 0.75;
+    transition: opacity 0.2s ease;
+}
+
+.dpad-container:hover, .dpad-container:active {
+    opacity: 0.95;
+}
+
+.dpad-btn {
+    position: absolute;
+    width: 44px;
+    height: 44px;
+    background: rgba(255, 255, 255, 0.85);
+    border: 2px solid #64748b;
+    border-radius: 12px;
+    font-size: 18px;
+    font-weight: bold;
+    color: #1e293b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    touch-action: none;
+    cursor: pointer;
+}
+
+.dpad-btn:active, .dpad-btn.active {
+    background: #3b82f6;
+    color: #ffffff;
+    transform: scale(0.92);
+}
+
+.dpad-up { top: 0; left: 48px; }
+.dpad-down { bottom: 0; left: 48px; }
+.dpad-left { top: 48px; left: 0; }
+.dpad-right { top: 48px; right: 0; }
+.dpad-center {
+    position: absolute;
+    top: 48px;
+    left: 48px;
+    width: 44px;
+    height: 44px;
+    background: rgba(226, 232, 240, 0.6);
+    border-radius: 8px;
+}
+
+/* Сенсорная кнопка действия (сачок) */
+.touch-action-btn {
+    pointer-events: auto;
+    width: 84px;
+    height: 84px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    border: 3px solid #fef08a;
+    box-shadow: 0 6px 16px rgba(217, 119, 6, 0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    touch-action: none;
+    transition: transform 0.1s ease;
+}
+
+.touch-action-btn:active {
+    transform: scale(0.9);
+    background: linear-gradient(135deg, #ea580c, #c2410c);
+}
+
+.touch-action-icon {
+    font-size: 32px;
+    line-height: 1;
+}
+
+.touch-action-text {
+    font-size: 11px;
+    font-weight: 800;
+    color: #ffffff;
+    text-transform: uppercase;
+    margin-top: 2px;
+}
+
+/* Модальное окно завершения дня */
+.modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.modal-overlay.hidden {
+    display: none;
+    opacity: 0;
+}
+
+.modal-card {
+    background: #ffffff;
+    border-radius: 24px;
+    padding: 32px 28px;
+    max-width: 90%;
+    width: 380px;
+    text-align: center;
+    box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.3), 0 10px 15px -5px rgba(0, 0, 0, 0.1);
+    border: 4px solid #fed7aa;
+    animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes popIn {
+    0% { transform: scale(0.8); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.modal-title {
+    font-size: 24px;
+    color: #9a3412;
+    margin-bottom: 12px;
+    font-weight: 800;
+}
+
+.modal-desc {
+    font-size: 16px;
+    color: #475569;
+    line-height: 1.5;
+    margin-bottom: 24px;
+}
+
+.btn-primary {
+    width: 100%;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #ffffff;
+    border: none;
+    border-radius: 16px;
+    padding: 14px 20px;
+    font-size: 18px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 6px 14px rgba(217, 119, 6, 0.4);
+    transition: all 0.15s ease;
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 18px rgba(217, 119, 6, 0.5);
+}
+
+.btn-primary:active {
+    transform: translateY(1px);
+}
+
+/* Адаптив для маленьких экранов и мобильных устройств */
+@media (max-width: 650px) {
+    #hud {
+        top: 10px;
+        left: 10px;
+        right: 10px;
+        gap: 6px;
+    }
+
+    .hud-card {
+        padding: 6px 10px;
+        font-size: 13px;
+        gap: 4px;
+    }
+
+    .hud-card .icon {
+        font-size: 15px;
+    }
+
+    .btn-icon {
+        width: 32px;
+        height: 32px;
+        font-size: 14px;
+    }
+
+    #controls-hint {
+        display: none; /* скрываем клавиатурную подсказку на мобильных */
+    }
+
+    .dpad-container {
+        width: 120px;
+        height: 120px;
+    }
+
+    .dpad-btn {
+        width: 38px;
+        height: 38px;
+        font-size: 15px;
+    }
+
+    .dpad-up { left: 41px; }
+    .dpad-down { left: 41px; }
+    .dpad-left { top: 41px; }
+    .dpad-right { top: 41px; }
+    .dpad-center { top: 41px; left: 41px; width: 38px; height: 38px; }
+
+    .touch-action-btn {
+        width: 72px;
+        height: 72px;
+    }
+
+    .touch-action-icon {
+        font-size: 26px;
+    }
+
+    .modal-card {
+        padding: 24px 20px;
+    }
+
+    .modal-title {
+        font-size: 20px;
+    }
+
+    .btn-primary {
+        font-size: 16px;
+        padding: 12px 16px;
+    }
+}
+
+/* На экранах ПК без тача делаем сенсорные кнопки ненавязчивыми */
+@media (min-width: 1024px) {
+    #mobile-controls {
+        opacity: 0.35;
+        transition: opacity 0.2s ease;
+    }
+    #mobile-controls:hover {
+        opacity: 0.9;
+    }
+}
