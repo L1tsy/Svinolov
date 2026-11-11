@@ -1,282 +1,193 @@
+'use strict';
+
 /**
- * Класс напарника-ловца (автономный помощник, нанимаемый с 10 дня)
+ * Напарник: сам выбирает свинью, догоняет и машет сачком
  */
 class Helper {
-    constructor(x, y, config = {}, index = 0) {
-        this.id = 'helper_' + index;
-        this.helperIndex = index + 1;
-        this.x = x;
-        this.y = y;
-        this.radius = 18;
-
-        // Скорость и радиус сачка помощника
-        this.speed = (config.PLAYER_SPEED || 235) * 0.9;
-        this.catchRadius = (config.CATCH_RADIUS || 52) * 0.95;
-        this.catchCooldown = 1.1; // перезарядка помощника
-        this.catchCooldownTimer = 0;
-
-        // Вектор и анимация
-        this.facing = 1;
-        this.isMoving = false;
-        this.walkAnimTimer = 0;
-        this.swingTimer = 0;
-        this.isSwinging = false;
-        this.swingCircleTimer = 0;
-
-        // Палитра костюмов для разных напарников
-        const PALETTE = [
-            { suit: '#15803d', hat: '#d97706' }, // 1: зеленый комбинезон
-            { suit: '#4338ca', hat: '#b45309' }, // 2: индиго
-            { suit: '#c2410c', hat: '#65a30d' }, // 3: терракотовый
-            { suit: '#7e22ce', hat: '#0284c7' }, // 4: фиолетовый
-            { suit: '#0f766e', hat: '#e11d48' }  // 5: бирюзовый
+    constructor(index, x, y) {
+        const PAL = [
+            { suit: '#2f9e44', hat: '#f08c00' }, { suit: '#7048e8', hat: '#e03131' },
+            { suit: '#d9480f', hat: '#2f9e44' }, { suit: '#0c8599', hat: '#f783ac' }
         ];
-        const pal = PALETTE[index % PALETTE.length];
-        this.color = pal.suit;
-        this.hatColor = pal.hat;
+        this.index = index;
+        this.pal = PAL[index % PAL.length];
+        this.x = x; this.y = y;
+        this.r = 14;
+        this.vx = 0; this.vy = 0;
+        this.speed = CONFIG.PLAYER_SPEED * 0.84;
+        this.catchRadius = CONFIG.CATCH_RADIUS * 0.82;
+        this.cd = U.rand(0.3, 1);
+        this.swingT = 0; this.swingDur = 0.24;
+        this.facing = 1; this.walk = 0; this.moving = false; this.t = Math.random() * 5;
+        this.target = null;
+        this.retarget = 0;
     }
 
-    /**
-     * Готов ли помощник сделать взмах сачком
-     */
-    canCatch() {
-        return this.catchCooldownTimer <= 0;
-    }
+    update(dt, g) {
+        this.t += dt;
+        if (this.cd > 0) this.cd -= dt;
+        if (this.swingT > 0) this.swingT -= dt;
+        this.retarget -= dt;
 
-    /**
-     * Взмах сачком
-     */
-    swing() {
-        this.isSwinging = true;
-        this.swingTimer = 0.25;
-        this.swingCircleTimer = 0.2;
-    }
-
-    /**
-     * Успешная поимка
-     */
-    onSuccessfulCatch() {
-        this.catchCooldownTimer = this.catchCooldown;
-    }
-
-    /**
-     * Автономный ИИ помощника: преследование ближайшей непойманной свиньи
-     */
-    update(dt, arenaWidth, arenaHeight, obstacles = [], pigs = []) {
-        if (this.catchCooldownTimer > 0) {
-            this.catchCooldownTimer = Math.max(0, this.catchCooldownTimer - dt);
-        }
-        if (this.isSwinging) {
-            this.swingTimer -= dt;
-            if (this.swingTimer <= 0) this.isSwinging = false;
-        }
-        if (this.swingCircleTimer > 0) {
-            this.swingCircleTimer -= dt;
-        }
-
-        // Поиск ближайшей свиньи на поле
-        let closestPig = null;
-        let minDist = Infinity;
-
-        for (const pig of pigs) {
-            if (pig.caught || pig.isInBarn) continue;
-
-            const dist = Math.hypot(pig.x - this.x, pig.y - this.y);
-            // Приоритет большим свиньям, если они есть
-            const priorityBonus = pig.isBig ? -80 : 0;
-            if (dist + priorityBonus < minDist) {
-                minDist = dist + priorityBonus;
-                closestPig = pig;
+        let tx = 0, ty = 0;
+        if (g.state === 'play') {
+            if (!this.target || !this.target.active || this.target.state === 'escape' || this.retarget <= 0) {
+                this.target = this.pickTarget(g);
+                this.retarget = 0.7;
             }
-        }
-
-        let vx = 0;
-        let vy = 0;
-
-        if (closestPig) {
-            const dx = closestPig.x - this.x;
-            const dy = closestPig.y - this.y;
-            const dist = Math.hypot(dx, dy);
-
-            if (dist > 28) {
-                this.isMoving = true;
-                this.walkAnimTimer += dt * 10;
-                vx = (dx / dist) * this.speed;
-                vy = (dy / dist) * this.speed;
-
-                if (Math.abs(vx) > 3) {
-                    this.facing = vx >= 0 ? 1 : -1;
+            const p = this.target;
+            if (p) {
+                const px = p.x + p.vx * 0.22, py = p.y + p.vy * 0.22;
+                const dx = px - this.x, dy = py - this.y, dd = Math.hypot(dx, dy) || 1;
+                if (dd > 20) { tx = dx / dd; ty = dy / dd; }
+                const av = g.world.avoid(this.x, this.y, 30);
+                tx += av.x * 1.3; ty += av.y * 1.3;
+                const real = Math.hypot(p.x - this.x, p.y - this.y);
+                if (real < this.catchRadius * 0.8 + p.r * 0.5 && this.cd <= 0) {
+                    this.swingT = this.swingDur;
+                    const res = g.sweep(this, this.catchRadius);
+                    this.cd = res.hits > 0 ? 1.5 : 0.8;
+                    g.fx.ring(this.x, this.y + 4, this.catchRadius * 0.8, 'rgba(180,255,190,0.8)', 0.25, 4);
                 }
             } else {
-                this.isMoving = false;
-                this.walkAnimTimer = 0;
+                // Свиней нет — держимся рядом с фермером
+                const dx = g.player.x - this.x, dy = g.player.y - this.y, dd = Math.hypot(dx, dy) || 1;
+                if (dd > 110 + this.index * 30) { tx = dx / dd; ty = dy / dd; }
             }
-        } else {
-            // Если свиней нет — стоит на месте
-            this.isMoving = false;
-            this.walkAnimTimer = 0;
         }
+        const l = Math.hypot(tx, ty);
+        if (l > 1) { tx /= l; ty /= l; }
+        const mud = g.world.inMud(this.x, this.y + 10) ? 0.6 : 1;
+        const k = Math.min(1, 10 * dt);
+        this.vx += (tx * this.speed * mud - this.vx) * k; this.vy += (ty * this.speed * mud - this.vy) * k;
+        this.x += this.vx * dt; this.y += this.vy * dt;
+        this.moving = Math.hypot(this.vx, this.vy) > 25;
+        if (this.moving) this.walk += dt * 12;
+        if (Math.abs(this.vx) > 15) this.facing = this.vx > 0 ? 1 : -1;
+        g.world.resolve(this, this.r);
+    }
 
-        // Применяем скорость
-        this.x += vx * dt;
-        this.y += vy * dt;
+    pickTarget(g) {
+        let best = null, bd = Infinity;
+        for (const p of g.pigs) {
+            if (!p.active || p.state === 'escape' || p.state === 'burst') continue;
+            let dd = Math.hypot(p.x - this.x, p.y - this.y);
+            for (const h of g.helpers) if (h !== this && h.target === p) dd += 600;   // не толпимся
+            if (p.def.charger) dd += 250;
+            if (dd < bd) { bd = dd; best = p; }
+        }
+        return best;
+    }
 
-        // Коллизии со зданиями
-        if (Array.isArray(obstacles)) {
-            for (const obs of obstacles) {
-                if (!obs) continue;
-                const pad = this.radius;
-                if (this.x > obs.x - pad && this.x < obs.x + obs.width + pad &&
-                    this.y > obs.y - pad && this.y < obs.y + obs.height + pad) {
-                    
-                    const dLeft = Math.abs(this.x - (obs.x - pad));
-                    const dRight = Math.abs(this.x - (obs.x + obs.width + pad));
-                    const dTop = Math.abs(this.y - (obs.y - pad));
-                    const dBottom = Math.abs(this.y - (obs.y + obs.height + pad));
+    draw(ctx) {
+        drawFarmer(ctx, {
+            x: this.x, y: this.y, facing: this.facing, walk: this.walk, moving: this.moving, t: this.t,
+            suit: this.pal.suit, hat: 'cap', hatColor: this.pal.hat, skin: '#f7c9a0', stun: 0,
+            swingK: this.swingT > 0 ? 1 - this.swingT / this.swingDur : -1
+        });
+    }
+}
 
-                    const minD = Math.min(dLeft, dRight, dTop, dBottom);
-                    if (minD === dLeft) this.x = obs.x - pad;
-                    else if (minD === dRight) this.x = obs.x + obs.width + pad;
-                    else if (minD === dTop) this.y = obs.y - pad;
-                    else if (minD === dBottom) this.y = obs.y + obs.height + pad;
+/**
+ * Пёс Бобик: облаивает свиней, те пугаются и замедляются
+ */
+class Dog {
+    constructor(index, x, y) {
+        this.index = index;
+        this.x = x; this.y = y;
+        this.r = 10;
+        this.vx = 0; this.vy = 0;
+        this.speed = 335;
+        this.facing = 1; this.anim = 0; this.t = Math.random() * 5;
+        this.target = null;
+        this.rest = 0;
+        this.barkT = 0;
+        this.color = index === 0 ? '#c68642' : '#f1f1f1';
+        this.ear = index === 0 ? '#7a4a22' : '#4a4a4a';
+    }
+
+    update(dt, g) {
+        this.t += dt;
+        if (this.rest > 0) this.rest -= dt;
+        if (this.barkT > 0) this.barkT -= dt;
+        let tx = 0, ty = 0;
+        const pl = g.player;
+
+        if (g.state === 'play' && this.rest <= 0) {
+            if (!this.target || !this.target.active || this.target.barkCd > 0 || this.target.state === 'escape') this.target = this.pickTarget(g);
+            const p = this.target;
+            if (p) {
+                const dx = p.x - this.x, dy = p.y - this.y, dd = Math.hypot(dx, dy) || 1;
+                tx = dx / dd; ty = dy / dd;
+                if (dd < p.r + 30) {
+                    p.slow = 3.2; p.barkCd = 8; p.alert = 0.5;
+                    this.rest = 0.7; this.barkT = 0.35; this.target = null;
+                    g.sfx.bark();
+                    g.fx.text(this.x, this.y - 30, 'ГАВ!', { color: '#ffffff', size: 18, life: 0.6 });
+                    g.fx.ring(this.x, this.y, 30, 'rgba(255,255,255,0.8)', 0.3, 3);
+                    tx = 0; ty = 0;
                 }
             }
         }
-
-        // Границы экрана
-        const margin = this.radius;
-        this.x = Math.max(margin, Math.min(arenaWidth - margin, this.x));
-        this.y = Math.max(margin, Math.min(arenaHeight - margin, this.y));
+        if (!this.target && this.rest <= 0) {
+            const ox = pl.x - pl.facing * (46 + this.index * 30), oy = pl.y + 26;
+            const dx = ox - this.x, dy = oy - this.y, dd = Math.hypot(dx, dy) || 1;
+            if (dd > 26) { const s = Math.min(1, dd / 120); tx = (dx / dd) * s; ty = (dy / dd) * s; }
+        }
+        const av = g.world.avoid(this.x, this.y, 24);
+        tx += av.x; ty += av.y;
+        const k = Math.min(1, 9 * dt);
+        this.vx += (tx * this.speed - this.vx) * k; this.vy += (ty * this.speed - this.vy) * k;
+        this.x += this.vx * dt; this.y += this.vy * dt;
+        const sp = Math.hypot(this.vx, this.vy);
+        this.anim += dt * (3 + sp * 0.07);
+        if (Math.abs(this.vx) > 15) this.facing = this.vx > 0 ? 1 : -1;
+        g.world.resolve(this, this.r);
     }
 
-    /**
-     * Отрисовка напарника в зеленом комбинезоне с бейджем
-     */
+    pickTarget(g) {
+        let best = null, bd = Infinity;
+        const pl = g.player;
+        for (const p of g.pigs) {
+            if (!p.active || p.barkCd > 0 || p.def.charger || p.state === 'escape' || p.state === 'burst' || p.frozen > 0) continue;
+            let dd = Math.hypot(p.x - pl.x, p.y - pl.y);
+            if (dd > 620) continue;
+            for (const o of g.dogs) if (o !== this && o.target === p) dd += 800;
+            if (p.def.gold) dd -= 300;
+            if (dd < bd) { bd = dd; best = p; }
+        }
+        return best;
+    }
+
     draw(ctx) {
-        // Кружок сачка при взмахе
-        if (this.swingCircleTimer > 0) {
-            ctx.save();
-            ctx.fillStyle = 'rgba(34, 197, 94, 0.2)';
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.catchRadius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#22c55e';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([4, 4]);
-            ctx.stroke();
-            ctx.restore();
-        }
-
+        const OUT = '#3b2212';
+        const run = Math.hypot(this.vx, this.vy) > 25;
+        const hop = run ? Math.abs(Math.sin(this.anim)) * 3 : 0;
         ctx.save();
-        ctx.translate(this.x, this.y);
-
-        // Тень
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
-        ctx.beginPath();
-        ctx.ellipse(0, 16, 16, 7, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Бейджик над головой «🤝 НАПАРНИК #N»
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.roundRect(-36, -38, 72, 14, 4);
-        ctx.fill();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 8.5px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(`🤝 НАПАРНИК #${this.helperIndex}`, 0, -28);
-
-        // Покачивание
-        const bobOffset = this.isMoving ? Math.sin(this.walkAnimTimer) * 2.5 : 0;
-        ctx.translate(0, bobOffset);
-
+        ctx.fillStyle = 'rgba(20,40,20,0.22)';
+        ctx.beginPath(); ctx.ellipse(this.x, this.y + 10, 14, 5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.translate(this.x, this.y - hop);
         ctx.scale(this.facing, 1);
-
-        // Зеленый комбинезон
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.roundRect(-12, -4, 24, 22, [4, 4, 6, 6]);
-        ctx.fill();
-
-        // Ремни
-        ctx.strokeStyle = '#14532d';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-6, -4);
-        ctx.lineTo(-6, 12);
-        ctx.moveTo(6, -4);
-        ctx.lineTo(6, 12);
-        ctx.stroke();
-
-        // Ноги
-        const legSwing = this.isMoving ? Math.sin(this.walkAnimTimer) * 4 : 0;
-        ctx.fillStyle = '#1c1917';
-        ctx.fillRect(-9, 18 + legSwing, 6, 6);
-        ctx.fillRect(3, 18 - legSwing, 6, 6);
-
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        const leg = run ? Math.sin(this.anim) * 4 : 0;
+        ctx.fillStyle = this.color; ctx.strokeStyle = OUT; ctx.lineWidth = 1.8;
+        // Хвост
+        ctx.save(); ctx.translate(-12, -4); ctx.rotate(-0.9 + Math.sin(this.t * 14) * 0.45);
+        ctx.beginPath(); ctx.roundRect(-2, -11, 4, 12, 2); ctx.fill(); ctx.stroke(); ctx.restore();
+        // Лапы
+        ctx.beginPath(); ctx.roundRect(-10 - leg, 4, 4.5, 8, 2); ctx.roundRect(6 + leg, 4, 4.5, 8, 2); ctx.fill(); ctx.stroke();
+        // Тело
+        ctx.beginPath(); ctx.ellipse(0, 0, 13, 8, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         // Голова
-        ctx.fillStyle = '#ffedd5';
-        ctx.beginPath();
-        ctx.arc(0, -12, 10, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Лицо
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.arc(4, -13, 1.8, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#c2410c';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(3, -9, 3, 0.1, Math.PI * 0.8);
-        ctx.stroke();
-
-        // Кепка/панама
-        ctx.fillStyle = this.hatColor;
-        ctx.beginPath();
-        ctx.roundRect(-8, -24, 16, 7, [3, 3, 0, 0]);
-        ctx.fill();
-
-        ctx.fillStyle = '#15803d';
-        ctx.fillRect(-8, -19, 16, 2.5);
-
-        ctx.fillStyle = this.hatColor;
-        ctx.beginPath();
-        ctx.ellipse(0, -17, 16, 4.5, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Сачок напарника
-        ctx.save();
-        ctx.translate(10, 2);
-
-        if (this.isSwinging) {
-            ctx.rotate(Math.PI / 4 + Math.sin((0.25 - this.swingTimer) * 20) * 0.7);
-        }
-
-        ctx.strokeStyle = '#78350f';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(-2, 4);
-        ctx.lineTo(16, -10);
-        ctx.stroke();
-
-        ctx.strokeStyle = '#22c55e';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.ellipse(18, -12, 7, 11, Math.PI / 4, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.fillStyle = 'rgba(220, 252, 231, 0.6)';
-        ctx.beginPath();
-        ctx.ellipse(21, -10, 6, 9, Math.PI / 4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-
+        ctx.beginPath(); ctx.arc(12, -8, 7.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.roundRect(15, -8, 9, 6.5, 3); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = this.ear;
+        ctx.beginPath(); ctx.ellipse(8, -9, 3.5, 6.5, 0.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = OUT;
+        ctx.beginPath(); ctx.arc(14, -10, 1.5, 0, Math.PI * 2); ctx.arc(24, -6.5, 1.8, 0, Math.PI * 2); ctx.fill();
+        if (this.barkT > 0) { ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.ellipse(20, -1, 3, 2.5, 0, 0, Math.PI * 2); ctx.fill(); }
+        // Ошейник
+        ctx.strokeStyle = '#e63946'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(7, -2); ctx.lineTo(10, 2); ctx.stroke();
         ctx.restore();
     }
 }

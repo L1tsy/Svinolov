@@ -2,103 +2,136 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Свинолов — 2D игра</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#63b54d">
+    <title>Свинолов</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="game-container">
-        <!-- Холст Canvas -->
         <canvas id="game-canvas"></canvas>
 
-        <!-- Верхняя панель HUD -->
-        <header id="hud">
-            <div class="hud-card" title="Текущий игровой день">
-                <span class="icon">📅</span>
-                <span>День: <strong id="day-number">1</strong></span>
+        <!-- HUD -->
+        <header id="hud" class="hidden">
+            <div class="hud-left">
+                <div class="chip" id="chip-day" title="День">
+                    <span class="chip-ico">📅</span>
+                    <span class="chip-label">День</span>
+                    <b id="hud-day">1</b>
+                    <span id="hud-icons" class="chip-icons"></span>
+                </div>
+                <div class="chip" id="chip-pigs" title="Поймано свиней">
+                    <span class="chip-ico">🐷</span>
+                    <b id="hud-caught">0/0</b>
+                </div>
             </div>
-
-            <div class="hud-card" title="Осталось поймать свиней в этот день">
-                <span class="icon">🐷</span>
-                <span>Осталось: <strong id="pigs-left">0 / 0</strong></span>
+            <div class="hud-timer" id="hud-timer" title="Время до заката">
+                <span class="timer-ico">☀️</span>
+                <div class="timer-track"><div class="timer-fill" id="timer-fill"></div></div>
+                <span class="timer-ico">🌙</span>
+                <b class="timer-secs" id="timer-secs">0</b>
             </div>
-
-            <div class="hud-card" title="Накопленные золотые монеты">
-                <span class="icon">🪙</span>
-                <span id="coin-count">0</span>
+            <div class="hud-right">
+                <div class="chip chip-coins" id="chip-coins" title="Монеты">
+                    <span class="chip-ico">🪙</span>
+                    <b id="hud-coins">0</b>
+                </div>
+                <button class="round-btn" id="btn-shop" type="button" aria-label="Магазин">🛒</button>
+                <button class="round-btn" id="btn-pause" type="button" aria-label="Пауза">⏸</button>
             </div>
-
-            <!-- Кнопка Магазина улучшений -->
-            <button id="btn-open-shop" class="hud-card btn-shop" title="Открыть магазин улучшений">
-                <span class="icon">🛒</span>
-                <span>Магазин</span>
-            </button>
-
-            <!-- Кнопка быстрого найма напарника (с 10 дня) -->
-            <button id="btn-buy-helper" class="hud-card btn-helper locked" title="Нанять напарника-ловца">
-                <span id="helper-icon" class="icon">🔒</span>
-                <span id="helper-btn-text">Напарник</span>
-            </button>
-
-            <button id="btn-reset" class="btn-icon" title="Сбросить прогресс">🔄</button>
         </header>
 
-        <!-- Подсказка управления на ПК -->
-        <div id="controls-hint">
-            ⌨️ <strong>WASD</strong> — бег • <strong>ЛКМ</strong> или <strong>Пробел</strong> — поймать свинью в кружок (кулдаун 1 сек)
+        <div id="toasts"></div>
+        <div id="banner" aria-live="polite"><div class="banner-title" id="banner-title"></div><div class="banner-sub" id="banner-sub"></div></div>
+
+        <!-- Тач-управление -->
+        <div id="touch-ui" class="hidden">
+            <div id="joy-zone"></div>
+            <div id="joy-base" class="hidden"><div id="joy-stick"></div></div>
+            <button id="btn-dash" class="touch-btn dash" type="button" data-silent="1" aria-label="Рывок">💨</button>
+            <button id="btn-swing" class="touch-btn swing" type="button" data-silent="1" aria-label="Сачок">🕸️</button>
         </div>
 
-        <!-- Виртуальный контроллер для мобильных устройств -->
-        <div id="mobile-controls">
-            <!-- Виртуальный D-Pad слева -->
-            <div class="dpad-container">
-                <button class="dpad-btn dpad-up" data-dir="up">▲</button>
-                <button class="dpad-btn dpad-left" data-dir="left">◀</button>
-                <button class="dpad-btn dpad-down" data-dir="down">▼</button>
-                <button class="dpad-btn dpad-right" data-dir="right">▶</button>
-                <div class="dpad-center"></div>
-            </div>
-
-            <!-- Кнопка взмаха сачком справа -->
-            <button id="btn-touch-catch" class="touch-action-btn" title="Поймать в упор">
-                <span class="touch-action-icon">🕸️</span>
-                <span class="touch-action-text">Поймать</span>
-            </button>
-        </div>
-
-        <!-- Модальное окно завершения дня -->
-        <div id="day-complete-modal" class="modal-overlay hidden">
-            <div class="modal-card">
-                <h2 class="modal-title">🎉 День завершён!</h2>
-                <p id="day-summary-text" class="modal-desc">
-                    Все сбежавшие свиньи пойманы и надёжно заперты в амбаре!
-                </p>
-                <button id="btn-next-day" class="btn-primary">Начать следующий день ➜</button>
-            </div>
-        </div>
-
-        <!-- Модальное окно Магазина улучшений -->
-        <div id="shop-modal" class="modal-overlay hidden">
-            <div class="modal-card shop-modal-card">
-                <div class="shop-header">
-                    <div class="shop-title-group">
-                        <h2 class="modal-title" style="margin-bottom:0;">🛒 Магазин улучшений</h2>
-                        <div class="shop-balance">Ваш баланс: <strong id="shop-coin-count">0</strong> 🪙</div>
-                    </div>
-                    <button id="btn-close-shop" class="btn-close-modal" title="Закрыть">✕</button>
+        <!-- Титульный экран -->
+        <section id="title-screen" class="screen hidden">
+            <div class="title-box">
+                <div class="logo-pig" id="logo-pig">🐷</div>
+                <h1 class="logo"><span>СВИНОЛОВ</span></h1>
+                <p class="slogan">Лови сбежавших свиней и расширяй ферму!</p>
+                <div class="title-buttons">
+                    <button class="btn btn-big green" id="title-play" type="button">▶ Играть</button>
+                    <button class="btn btn-mid yellow" id="title-shop" type="button">🛒 Магазин</button>
                 </div>
-                <div id="shop-items-list" class="shop-items-container">
-                    <!-- Карточки улучшений генерируются через js/shop.js -->
+                <div class="title-stats" id="title-stats"></div>
+                <div class="help-card">
+                    <span><kbd>WASD</kbd> бег</span>
+                    <span><kbd>Пробел</kbd> / клик — сачок</span>
+                    <span><kbd>Shift</kbd> рывок</span>
                 </div>
             </div>
-        </div>
+        </section>
+
+        <!-- Итоги дня -->
+        <section id="result" class="overlay hidden">
+            <div class="panel result-panel">
+                <h2 id="res-title" class="res-title"></h2>
+                <div class="res-stars" id="res-stars">
+                    <span class="star">★</span><span class="star big">★</span><span class="star">★</span>
+                </div>
+                <div class="res-caught" id="res-caught"></div>
+                <div class="res-lines" id="res-lines"></div>
+                <div class="res-quest" id="res-quest"></div>
+                <div class="res-earned" id="res-earned"></div>
+                <div class="res-combo" id="res-combo"></div>
+                <div class="res-prestige hidden" id="res-prestige">🐽 Можно продать ферму в магазине → вкладка «Ферма»</div>
+                <div class="res-buttons">
+                    <button class="btn btn-big green" id="res-next" type="button">Следующий день ➜</button>
+                    <button class="btn btn-mid yellow" id="res-shop" type="button">🛒 Магазин</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Магазин -->
+        <section id="shop-modal" class="overlay hidden">
+            <div class="panel shop-panel">
+                <div class="panel-head">
+                    <h2>🛒 Магазин</h2>
+                    <div class="shop-coins" id="shop-coins">🪙 0</div>
+                    <button class="round-btn close-btn" id="shop-close" type="button" aria-label="Закрыть">✖</button>
+                </div>
+                <nav class="tabs" id="shop-tabs"></nav>
+                <div class="shop-body" id="shop-body"></div>
+            </div>
+        </section>
+
+        <!-- Пауза -->
+        <section id="pause-modal" class="overlay hidden">
+            <div class="panel pause-panel">
+                <h2>⏸ Пауза</h2>
+                <button class="btn btn-big green" id="pause-resume" type="button">▶ Продолжить</button>
+                <div class="toggle-row">
+                    <button class="btn toggle" id="pause-sound" type="button"></button>
+                    <button class="btn toggle" id="pause-music" type="button"></button>
+                </div>
+                <div class="help-card help-col">
+                    <span><kbd>WASD</kbd> / стрелки — бег</span>
+                    <span><kbd>Пробел</kbd> или клик — взмах сачком</span>
+                    <span><kbd>Shift</kbd> — рывок</span>
+                    <span>На телефоне: джойстик слева, 🕸️ — сачок, 💨 — рывок</span>
+                </div>
+                <button class="btn btn-small brown" id="pause-reset" type="button">🗑 Сбросить прогресс</button>
+            </div>
+        </section>
     </div>
 
-    <!-- Подключение скриптов в строгом порядке зависимостей -->
+    <script src="js/config.js"></script>
     <script src="js/storage.js"></script>
+    <script src="js/audio.js"></script>
+    <script src="js/fx.js"></script>
+    <script src="js/world.js"></script>
+    <script src="js/pig.js"></script>
     <script src="js/player.js"></script>
     <script src="js/helper.js"></script>
-    <script src="js/pig.js"></script>
     <script src="js/shop.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/game.js"></script>

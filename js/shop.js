@@ -1,215 +1,272 @@
+'use strict';
+
 /**
- * Магазин улучшений фермы и найма напарников
+ * Магазин: улучшения, команда, шляпы, достижения, ферма (престиж).
+ * Рисует содержимое модального окна #shop-modal; открытием/паузой управляет UI.
  */
 class Shop {
-    constructor() {
-        this.modalEl = document.getElementById('shop-modal');
-        this.itemsListEl = document.getElementById('shop-items-list');
-        this.btnClose = document.getElementById('btn-close-shop');
-        this.shopCoinCountEl = document.getElementById('shop-coin-count');
+    constructor(game, ui) {
+        this.game = game;
+        this.ui = ui;
+        this.el = document.getElementById('shop-modal');
+        this.tabsEl = document.getElementById('shop-tabs');
+        this.bodyEl = document.getElementById('shop-body');
+        this.coinsEl = document.getElementById('shop-coins');
+        this.tab = 'upgrades';
+        this._coins = null;
 
-        // Конфигурация доступных улучшений
-        this.catalog = {
-            speed: {
-                id: 'speed',
-                title: 'Сапоги-скороходы',
-                icon: '🥾',
-                desc: 'Увеличивает скорость перемещения фермера на +15%',
-                maxLevel: 5,
-                costs: [25, 50, 90, 150, 250],
-                getEffectText: (lvl) => `+${lvl * 15}% к скорости бега`
-            },
-            radius: {
-                id: 'radius',
-                title: 'Большой сачок',
-                icon: '🕸️',
-                desc: 'Расширяет кружок зоны действия сачка на +15%',
-                maxLevel: 5,
-                costs: [30, 60, 110, 180, 300],
-                getEffectText: (lvl) => `+${lvl * 15}% к радиусу сачка`
-            },
-            cooldown: {
-                id: 'cooldown',
-                title: 'Ловкие руки',
-                icon: '⚡',
-                desc: 'Снижает перезарядку сачка между поимками свиней',
-                maxLevel: 4,
-                costs: [40, 85, 160, 300],
-                // 1.0s -> 0.85s -> 0.70s -> 0.55s -> 0.40s
-                getEffectText: (lvl) => `Кулдаун: ${(1.0 - (lvl - 1) * 0.15).toFixed(2)} сек`
-            },
-            helper: {
-                id: 'helper',
-                title: 'Наём напарника',
-                icon: '🤝',
-                desc: 'Напарник автономно бегает по ферме и ловит свиней. Нужен для поимки Большой свиньи!',
-                maxLevel: 10,
-                // Формула: 1-й стоит 50 (с 10 дня), 2-й стоит 75 (с 20 дня), 3-й стоит 100 (с 30 дня)...
-                getCost: (count) => 50 + 25 * count,
-                getRequiredDay: (count) => 10 + 10 * count,
-                getEffectText: (count) => `Нанято напарников: ${count}`
+        this.tabs = [
+            { id: 'upgrades', label: '⬆️ Улучшения' },
+            { id: 'team', label: '👥 Команда' },
+            { id: 'hats', label: '🎩 Шляпы' },
+            { id: 'ach', label: '🏆 Достижения' },
+            { id: 'farm', label: '🌾 Ферма' }
+        ];
+
+        this.tabsEl.addEventListener('click', (e) => {
+            const b = e.target.closest('[data-tab]');
+            if (b) this.setTab(b.dataset.tab);
+        });
+        this.bodyEl.addEventListener('click', (e) => this._onBody(e));
+    }
+
+    get isOpen() { return !this.el.classList.contains('hidden'); }
+
+    open(tab) {
+        if (tab) this.tab = tab;
+        this.el.classList.remove('hidden');
+        this._coins = null;
+        this.bodyEl.scrollTop = 0;
+        this.render();
+    }
+
+    close() { this.el.classList.add('hidden'); }
+
+    refresh() { if (this.isOpen) this.render(); }
+
+    setTab(id) {
+        if (id === this.tab) return;
+        this.tab = id;
+        this.bodyEl.scrollTop = 0;
+        this.render();
+    }
+
+    /* ---------- Отрисовка ---------- */
+    render(flashId, quiet) {
+        const save = this.game.save;
+        const scroll = this.bodyEl.scrollTop;
+
+        // Баланс
+        const coinsTxt = '🪙 ' + U.fmt(save.coins);
+        if (this._coins !== null && this._coins !== save.coins) {
+            this.coinsEl.classList.remove('bump'); void this.coinsEl.offsetWidth; this.coinsEl.classList.add('bump');
+        }
+        this._coins = save.coins;
+        this.coinsEl.textContent = coinsTxt;
+
+        // Вкладки
+        const achDone = ACHIEVEMENTS.filter((a) => save.ach[a.id]).length;
+        this.tabsEl.innerHTML = this.tabs.map((t) => {
+            let badge = '';
+            if (t.id === 'ach') badge = `<span class="badge">${achDone}/${ACHIEVEMENTS.length}</span>`;
+            return `<button type="button" class="tab${t.id === this.tab ? ' active' : ''}" data-tab="${t.id}">${t.label}${badge}</button>`;
+        }).join('');
+
+        this.bodyEl.className = 'shop-body' + (this.tab === 'hats' ? ' hats' : '') + (this.tab === 'farm' ? ' single' : '');
+        let html = '';
+        switch (this.tab) {
+            case 'upgrades': html = this._upgradesHtml(save); break;
+            case 'team': html = this._teamHtml(save); break;
+            case 'hats': html = this._hatsHtml(save); break;
+            case 'ach': html = this._achHtml(save); break;
+            case 'farm': html = this._farmHtml(save); break;
+        }
+        this.bodyEl.innerHTML = html;
+        // повторный рендер при покупке не должен заново «выпрыгивать» карточки
+        if (quiet) this.bodyEl.querySelectorAll('.card').forEach((c) => { c.style.animation = 'none'; });
+        if (this.tab === 'hats') this._drawHats();
+        this.bodyEl.scrollTop = scroll;
+
+        if (flashId) {
+            const card = this.bodyEl.querySelector(`[data-id="${flashId}"]`);
+            if (card) { card.style.animation = ''; card.classList.add('flash'); }
+        }
+    }
+
+    _pips(level, max) {
+        let s = '';
+        for (let i = 0; i < max; i++) s += `<i class="pip${i < level ? ' on' : ''}"></i>`;
+        return `<div class="pips">${s}</div>`;
+    }
+
+    _upgradesHtml(save) {
+        return UPGRADES.map((up) => {
+            const lvl = save.upgrades[up.id] || 0;
+            const maxed = lvl >= up.max;
+            let btn, fx;
+            if (maxed) {
+                btn = '<button type="button" class="btn yellow" disabled>⭐ МАКС</button>';
+                fx = `<span class="now">${up.fx(lvl)}</span>`;
+            } else {
+                const cost = upgradeCost(up, lvl);
+                const can = save.coins >= cost;
+                btn = `<button type="button" class="btn green ${can ? 'can' : 'off'}" data-silent="1" data-act="upgrade" data-id="${up.id}">Улучшить · 🪙 ${U.fmt(cost)}</button>`;
+                fx = `<span class="now">${up.fx(lvl)}</span><span>➜</span><span class="next">${up.fx(lvl + 1)}</span>`;
             }
-        };
-
-        if (this.btnClose) {
-            this.btnClose.addEventListener('click', () => this.close());
-        }
+            return `<div class="card${maxed ? ' maxed' : ''}" data-id="${up.id}">
+                <div class="card-head"><div class="card-ico">${up.icon}</div>
+                    <div><div class="card-title">${up.title}</div><div class="card-desc">${up.desc}</div></div></div>
+                <div class="pips-label"><span>Уровень ${lvl} из ${up.max}</span></div>
+                ${this._pips(lvl, up.max)}
+                <div class="card-fx">${fx}</div>
+                ${btn}</div>`;
+        }).join('');
     }
 
-    /**
-     * Открыть магазин
-     */
-    open(game) {
-        if (!this.modalEl) return;
-        this.render(game);
-        this.modalEl.classList.remove('hidden');
+    _teamHtml(save) {
+        return TEAM.map((m) => {
+            const count = save[m.id] || 0;
+            const total = m.costs.length;
+            let btn;
+            let locked = false;
+            if (count >= total) {
+                btn = '<button type="button" class="btn yellow" disabled>⭐ МАКС</button>';
+            } else if (save.day < m.days[count]) {
+                locked = true;
+                btn = `<button type="button" class="btn" disabled>🔒 Откроется на ${m.days[count]}-й день</button>`;
+            } else {
+                const cost = m.costs[count];
+                const can = save.coins >= cost;
+                btn = `<button type="button" class="btn green ${can ? 'can' : 'off'}" data-silent="1" data-act="team" data-id="${m.id}">Нанять · 🪙 ${U.fmt(cost)}</button>`;
+            }
+            return `<div class="card${count >= total ? ' maxed' : ''}${locked ? ' locked-card' : ''}" data-id="${m.id}">
+                <div class="card-head"><div class="card-ico">${m.icon}</div>
+                    <div><div class="card-title">${m.title}</div><div class="card-desc">${m.desc}</div></div></div>
+                <div class="pips-label"><span>В строю: ${count}</span><span>максимум ${total}</span></div>
+                ${this._pips(count, total)}
+                ${btn}</div>`;
+        }).join('');
     }
 
-    /**
-     * Закрыть магазин
-     */
-    close() {
-        if (this.modalEl) {
-            this.modalEl.classList.add('hidden');
-        }
+    _hatsHtml(save) {
+        return HATS.map((h) => {
+            const owned = save.hats.includes(h.id);
+            const worn = save.hat === h.id;
+            let btn;
+            if (worn) btn = '<button type="button" class="btn yellow btn-small" disabled>✔ Надето</button>';
+            else if (owned) btn = `<button type="button" class="btn pink btn-small" data-silent="1" data-act="hat" data-id="${h.id}">Надеть</button>`;
+            else {
+                const can = save.coins >= h.cost;
+                btn = `<button type="button" class="btn green btn-small ${can ? 'can' : 'off'}" data-silent="1" data-act="hat" data-id="${h.id}">🪙 ${U.fmt(h.cost)}</button>`;
+            }
+            return `<div class="card hat-card${worn ? ' worn' : ''}${owned ? '' : ' locked-hat'}" data-id="${h.id}">
+                <canvas width="208" height="192" data-hat="${h.id}"></canvas>
+                <div class="card-title">${h.name}</div>
+                ${btn}</div>`;
+        }).join('');
     }
 
-    /**
-     * Перерисовка карточек магазина
-     */
-    render(game) {
-        if (this.shopCoinCountEl) {
-            this.shopCoinCountEl.textContent = game.coins;
-        }
-        if (!this.itemsListEl) return;
-
-        this.itemsListEl.innerHTML = '';
-
-        // 1. Улучшение скорости
-        this.renderUpgradeCard(game, this.catalog.speed, game.upgrades.speedLevel || 1);
-
-        // 2. Улучшение радиуса сачка
-        this.renderUpgradeCard(game, this.catalog.radius, game.upgrades.radiusLevel || 1);
-
-        // 3. Улучшение перезарядки
-        this.renderUpgradeCard(game, this.catalog.cooldown, game.upgrades.cooldownLevel || 1);
-
-        // 4. Наём напарников (50, 75, 100...)
-        this.renderHelperCard(game, this.catalog.helper, game.upgrades.helpersCount || 0);
+    _drawHats() {
+        this.bodyEl.querySelectorAll('canvas[data-hat]').forEach((cv) => {
+            const ctx = cv.getContext('2d');
+            ctx.clearRect(0, 0, cv.width, cv.height);
+            ctx.save();
+            ctx.scale(2 * 1.6, 2 * 1.6);
+            try {
+                drawFarmer(ctx, {
+                    x: 20, y: 33, facing: 1, walk: 0, moving: false, t: 0,
+                    suit: '#3b82f6', hat: cv.dataset.hat, swingK: -1, stun: 0
+                });
+            } catch (e) { /* превью — необязательная часть */ }
+            ctx.restore();
+        });
     }
 
-    /**
-     * Рендер стандартной карточки улучшения
-     */
-    renderUpgradeCard(game, item, currentLevel) {
-        const isMax = currentLevel >= item.maxLevel;
-        const nextCost = !isMax ? item.costs[currentLevel - 1] : 0;
-        const canAfford = !isMax && game.coins >= nextCost;
-
-        const card = document.createElement('div');
-        card.className = `shop-item-card ${isMax ? 'maxed' : ''}`;
-
-        // Генерация индикатора уровней (точки/полоски)
-        let levelDots = '';
-        for (let i = 1; i <= item.maxLevel; i++) {
-            levelDots += `<span class="lvl-dot ${i <= currentLevel ? 'active' : ''}"></span>`;
-        }
-
-        card.innerHTML = `
-            <div class="shop-item-icon">${item.icon}</div>
-            <div class="shop-item-info">
-                <div class="shop-item-title-row">
-                    <h3 class="shop-item-title">${item.title}</h3>
-                    <div class="shop-item-level">${levelDots}</div>
+    _achHtml(save) {
+        const done = ACHIEVEMENTS.filter((a) => save.ach[a.id]).length;
+        const head = `<div class="ach-count">🏆 Выполнено: <b>${done}</b> из <b>${ACHIEVEMENTS.length}</b></div>`;
+        return head + ACHIEVEMENTS.map((a) => {
+            const ok = !!save.ach[a.id];
+            const val = Math.min(save.stats[a.stat] || 0, a.goal);
+            const pct = Math.round((val / a.goal) * 100);
+            return `<div class="card ach${ok ? ' done' : ''}" data-id="${a.id}">
+                <div class="card-ico">${a.icon}</div>
+                <div class="ach-main">
+                    <div class="card-title">${a.title}</div>
+                    <div class="card-desc">${a.desc}</div>
+                    <div class="bar"><i style="width:${pct}%"></i></div>
+                    <div class="ach-meta"><span>${U.fmt(val)} / ${U.fmt(a.goal)}</span><span>Награда: 🪙 ${U.fmt(a.reward)}</span></div>
                 </div>
-                <p class="shop-item-desc">${item.desc}</p>
-                <div class="shop-item-effect">${item.getEffectText(currentLevel)}</div>
-            </div>
-            <div class="shop-item-action">
-                ${isMax ? `
-                    <button class="btn-shop-buy maxed" disabled>МАКС.</button>
-                ` : `
-                    <button class="btn-shop-buy ${canAfford ? 'ready' : 'disabled'}" data-upgrade="${item.id}">
-                        <span>${nextCost} 🪙</span>
-                    </button>
-                `}
-            </div>
-        `;
-
-        if (!isMax) {
-            const btn = card.querySelector('.btn-shop-buy');
-            btn.onclick = () => {
-                if (game.coins >= nextCost) {
-                    game.coins -= nextCost;
-                    if (item.id === 'speed') game.upgrades.speedLevel = currentLevel + 1;
-                    if (item.id === 'radius') game.upgrades.radiusLevel = currentLevel + 1;
-                    if (item.id === 'cooldown') game.upgrades.cooldownLevel = currentLevel + 1;
-
-                    game.applyUpgrades();
-                    game.ui.playHireSound();
-                    game.saveProgress();
-                    this.render(game);
-                }
-            };
-        }
-
-        this.itemsListEl.appendChild(card);
+                ${ok ? '<div class="ach-check">✅</div>' : ''}</div>`;
+        }).join('');
     }
 
-    /**
-     * Рендер карточки найма напарников
-     */
-    renderHelperCard(game, item, helpersCount) {
-        const nextCost = item.getCost(helpersCount);
-        const reqDay = item.getRequiredDay(helpersCount);
-        const dayUnlocked = game.day >= reqDay;
-        const canAfford = dayUnlocked && game.coins >= nextCost;
+    _farmHtml(save) {
+        const s = save.stats;
+        const rows = [
+            ['🐷 Всего свиней', U.fmt(s.totalPigs || 0)],
+            ['🪙 Монет заработано', U.fmt(s.totalCoins || 0)],
+            ['🔥 Лучшее комбо', 'x' + (s.bestCombo || 0)],
+            ['🕸️ Лучший улов за взмах', s.bestMulti || 0],
+            ['✨ Золотых свиней', s.goldCaught || 0],
+            ['🐗 Боссов побеждено', s.bossKilled || 0],
+            ['⭐ Дней на 3★', s.perfectDays || 0],
+            ['📅 Рекорд дня', s.bestDay || 1]
+        ];
+        const grid = '<div class="farm-grid">' + rows.map((r) => `<div class="stat"><span>${r[0]}</span><b>${r[1]}</b></div>`).join('') + '</div>';
 
-        const card = document.createElement('div');
-        card.className = `shop-item-card helper-card ${!dayUnlocked ? 'locked' : ''}`;
-
-        let statusText = '';
-        if (!dayUnlocked) {
-            statusText = `🔒 Доступно с <strong>${reqDay} дня</strong>`;
+        const pct = Math.round(CONFIG.PRESTIGE_BONUS * 100);
+        const cur = Math.round((save.prestige || 0) * CONFIG.PRESTIGE_BONUS * 100);
+        const can = this.game.canPrestige();
+        const unlocked = save.day >= CONFIG.PRESTIGE_DAY;
+        let action;
+        if (can) {
+            action = '<button type="button" class="btn pink btn-big can" data-silent="1" data-act="prestige" style="width:100%">🐽 Продать ферму</button>';
+        } else if (!unlocked) {
+            action = `<div class="prestige-lock">🔒 Откроется с ${CONFIG.PRESTIGE_DAY}-го дня. Сейчас день ${save.day}.</div>`;
         } else {
-            statusText = `Стоимость ${helpersCount + 1}-го напарника: <strong>${nextCost} 🪙</strong>`;
+            action = '<div class="prestige-lock">🔒 Сейчас продать ферму нельзя.</div>';
         }
+        const prestige = `<div class="card prestige-card">
+            <h3>🐽 Продать ферму</h3>
+            <div class="card-desc" style="font-size:15px;opacity:1">Начни всё с чистого листа — но богаче, чем прежде.</div>
+            <ul>
+                <li>Сбрасываются: прогресс дней, монеты, улучшения и команда.</li>
+                <li>Остаются: шляпы и достижения.</li>
+                <li>Навсегда: <b>+${pct}% монет</b> за каждую продажу.</li>
+            </ul>
+            <div class="bonus">Продаж: <b>${save.prestige || 0}</b> · сейчас бонус <b>+${cur}%</b></div>
+            ${action}</div>`;
+        return grid + prestige;
+    }
 
-        card.innerHTML = `
-            <div class="shop-item-icon">${item.icon}</div>
-            <div class="shop-item-info">
-                <div class="shop-item-title-row">
-                    <h3 class="shop-item-title">${item.title} #${helpersCount + 1}</h3>
-                    <span class="helper-count-badge">В строю: ${helpersCount}</span>
-                </div>
-                <p class="shop-item-desc">${item.desc}</p>
-                <div class="shop-item-effect ${!dayUnlocked ? 'locked-text' : ''}">${statusText}</div>
-            </div>
-            <div class="shop-item-action">
-                ${!dayUnlocked ? `
-                    <button class="btn-shop-buy locked" disabled>День ${reqDay}</button>
-                ` : `
-                    <button class="btn-shop-buy ${canAfford ? 'ready' : 'disabled'}" id="btn-buy-helper-shop">
-                        <span>${nextCost} 🪙</span>
-                    </button>
-                `}
-            </div>
-        `;
-
-        if (dayUnlocked) {
-            const btn = card.querySelector('#btn-buy-helper-shop');
-            btn.onclick = () => {
-                if (game.coins >= nextCost) {
-                    game.coins -= nextCost;
-                    game.upgrades.helpersCount = (game.upgrades.helpersCount || 0) + 1;
-                    game.addNewHelper();
-                    game.ui.playHireSound();
-                    game.saveProgress();
-                    this.render(game);
-                }
-            };
+    /* ---------- Действия ---------- */
+    _onBody(e) {
+        const btn = e.target.closest('[data-act]');
+        if (!btn || btn.disabled) return;
+        const act = btn.dataset.act, id = btn.dataset.id;
+        const g = this.game;
+        let ok = false;
+        if (act === 'upgrade') ok = g.buyUpgrade(id);
+        else if (act === 'team') ok = g.buyTeam(id);
+        else if (act === 'hat') ok = g.buyHat(id);
+        else if (act === 'prestige') {
+            if (!g.canPrestige()) return;
+            if (window.confirm('Продать ферму? Прогресс дней, монеты, улучшения и команда сбросятся. Шляпы и достижения останутся, а монет навсегда станет больше.')) {
+                g.doPrestige();
+                this.ui.closeShop();
+            }
+            return;
         }
+        this.render(ok ? id : null, true);
+        if (!ok) this._shake(btn);
+    }
 
-        this.itemsListEl.appendChild(card);
+    _shake(btn) {
+        const b = this.bodyEl.querySelector(`[data-act="${btn.dataset.act}"][data-id="${btn.dataset.id}"]`);
+        if (b && b.animate) b.animate(
+            [{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(0)' }],
+            { duration: 220 }
+        );
     }
 }

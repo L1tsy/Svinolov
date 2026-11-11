@@ -1,328 +1,291 @@
+'use strict';
+
 /**
- * Класс игрока (фермера-свинолова)
+ * Общая отрисовка человечка-фермера (игрок и напарники)
+ */
+function drawFarmer(ctx, o) {
+    const OUT = '#3b2212';
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    if (o.alpha !== undefined) ctx.globalAlpha = o.alpha;
+
+    // Тень
+    ctx.fillStyle = 'rgba(20,40,20,0.25)';
+    ctx.beginPath(); ctx.ellipse(0, 17, 16, 6.5, 0, 0, Math.PI * 2); ctx.fill();
+
+    const bob = o.moving ? Math.abs(Math.sin(o.walk)) * 3 : Math.sin(o.t * 2.4) * 0.8;
+    ctx.translate(0, -bob);
+    if (o.stun > 0) ctx.rotate(Math.sin(o.t * 22) * 0.16);
+    else if (o.dashing) ctx.rotate(0.28 * o.facing);
+    else if (o.moving) ctx.rotate(0.06 * o.facing);
+    ctx.scale(o.facing, 1);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+
+    // Ноги
+    const leg = o.moving ? Math.sin(o.walk) * 6 : 0;
+    ctx.fillStyle = '#4a2f1a'; ctx.strokeStyle = OUT; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(-9 + leg, 13 + bob * 0.6, 8, 8, 3); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(1 - leg, 13 + bob * 0.6, 8, 8, 3); ctx.fill(); ctx.stroke();
+
+    // Туловище: рубашка и комбинезон
+    ctx.fillStyle = o.shirt || '#f4f1e8'; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.roundRect(-12, -8, 24, 24, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = o.suit;
+    ctx.beginPath(); ctx.roundRect(-12, 0, 24, 16, [3, 3, 7, 7]); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(-7, -6, 14, 9, 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath(); ctx.arc(-5, -2.5, 1.5, 0, Math.PI * 2); ctx.arc(5, -2.5, 1.5, 0, Math.PI * 2); ctx.fill();
+
+    // Голова
+    ctx.fillStyle = o.skin || '#ffd9b0'; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.arc(0, -17, 10.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    if (o.stun > 0) {
+        ctx.strokeStyle = OUT; ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(1.5, -20.5); ctx.lineTo(6.5, -15.5); ctx.moveTo(6.5, -20.5); ctx.lineTo(1.5, -15.5); ctx.stroke();
+    } else {
+        ctx.fillStyle = OUT;
+        ctx.beginPath(); ctx.arc(4.2, -18, 1.9, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#b5522b'; ctx.lineWidth = 1.7;
+        ctx.beginPath(); ctx.arc(3.5, -14, 3.6, 0.15, Math.PI * 0.8); ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(255,110,110,0.4)';
+    ctx.beginPath(); ctx.arc(-1, -13.5, 2.6, 0, Math.PI * 2); ctx.fill();
+
+    drawHat(ctx, o.hat || 'straw', o.hatColor);
+
+    // Рука с сачком
+    ctx.save();
+    ctx.translate(8, -1);
+    let ang = -0.55 + (o.moving ? Math.sin(o.walk) * 0.12 : 0);
+    if (o.swingK >= 0) ang = -2.1 + U.easeOut(o.swingK) * 3.2;
+    ctx.rotate(ang);
+    ctx.strokeStyle = OUT; ctx.lineWidth = 5.5;
+    ctx.beginPath(); ctx.moveTo(-2, 2); ctx.lineTo(22, -6); ctx.stroke();
+    ctx.strokeStyle = '#a9743f'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-2, 2); ctx.lineTo(22, -6); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.strokeStyle = OUT; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.ellipse(31, -9, 10, 13, 0.25, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = o.netColor || '#e8eef5'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = -1; i <= 1; i++) { ctx.moveTo(31 + i * 5, -21); ctx.lineTo(31 + i * 5, 3); ctx.moveTo(22, -9 + i * 6); ctx.lineTo(40, -9 + i * 6); }
+    ctx.stroke();
+    ctx.fillStyle = o.skin || '#ffd9b0'; ctx.strokeStyle = OUT; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.arc(0, 1, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+
+    ctx.restore();
+
+    // Звёздочки оглушения
+    if (o.stun > 0) {
+        ctx.fillStyle = '#ffe066';
+        for (let i = 0; i < 3; i++) {
+            const a = o.t * 7 + (i * Math.PI * 2) / 3;
+            Fx.starPath(ctx, o.x + Math.cos(a) * 16, o.y - 40 + Math.sin(a) * 5, 5, a);
+            ctx.fill();
+        }
+    }
+}
+
+function drawHat(ctx, id, color) {
+    const OUT = '#3b2212';
+    ctx.lineWidth = 2; ctx.strokeStyle = OUT; ctx.lineJoin = 'round';
+    switch (id) {
+        case 'cap':
+            ctx.fillStyle = color || '#2f6fed';
+            ctx.beginPath(); ctx.arc(0, -21, 10.8, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.roundRect(3, -24, 15, 4.5, 2); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(0, -31.5, 2, 0, Math.PI * 2); ctx.fill();
+            break;
+        case 'cowboy':
+            ctx.fillStyle = '#8a5a34';
+            ctx.beginPath(); ctx.moveTo(-20, -26); ctx.quadraticCurveTo(0, -17, 20, -26); ctx.quadraticCurveTo(0, -22, -20, -26); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(-9, -24); ctx.lineTo(-8, -35); ctx.quadraticCurveTo(0, -31, 8, -35); ctx.lineTo(9, -24); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#ffd23f'; ctx.fillRect(-8.5, -27, 17, 2.6);
+            break;
+        case 'chef':
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(-7, -35, 7, 0, Math.PI * 2); ctx.arc(7, -35, 7, 0, Math.PI * 2); ctx.arc(0, -39, 8, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(-7, -35, 7, 0, Math.PI * 2); ctx.arc(7, -35, 7, 0, Math.PI * 2); ctx.arc(0, -39, 8, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.roundRect(-9, -33, 18, 10, 2); ctx.fill(); ctx.stroke();
+            break;
+        case 'viking':
+            ctx.fillStyle = '#fff7df';
+            ctx.beginPath(); ctx.moveTo(-9, -26); ctx.quadraticCurveTo(-20, -28, -17, -40); ctx.quadraticCurveTo(-13, -31, -7, -30); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(9, -26); ctx.quadraticCurveTo(20, -28, 17, -40); ctx.quadraticCurveTo(13, -31, 7, -30); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#aab4bf';
+            ctx.beginPath(); ctx.arc(0, -22, 11, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.rect(-11, -24.5, 22, 3.5); ctx.fill(); ctx.stroke();
+            break;
+        case 'pig':
+            ctx.fillStyle = '#ff9ec4';
+            ctx.beginPath(); ctx.moveTo(-10, -24); ctx.lineTo(-9, -37); ctx.lineTo(-1, -27); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(10, -24); ctx.lineTo(9, -37); ctx.lineTo(1, -27); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.strokeStyle = '#f4729f'; ctx.lineWidth = 3.5;
+            ctx.beginPath(); ctx.arc(0, -17, 11, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+            break;
+        case 'crown':
+            ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = '#a66a00';
+            ctx.beginPath(); ctx.moveTo(-10, -24); ctx.lineTo(-12, -37); ctx.lineTo(-5, -30); ctx.lineTo(0, -40); ctx.lineTo(5, -30); ctx.lineTo(12, -37); ctx.lineTo(10, -24); ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.arc(0, -29, 2.4, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#4cc9f0'; ctx.beginPath(); ctx.arc(-6.5, -27, 1.7, 0, Math.PI * 2); ctx.arc(6.5, -27, 1.7, 0, Math.PI * 2); ctx.fill();
+            break;
+        default: // соломенная
+            ctx.fillStyle = color || '#f2c94c';
+            ctx.beginPath(); ctx.roundRect(-9, -34, 18, 11, [5, 5, 0, 0]); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#e63946'; ctx.fillRect(-8.6, -27, 17.2, 3);
+            ctx.fillStyle = color || '#f2c94c';
+            ctx.beginPath(); ctx.ellipse(0, -23.5, 18.5, 4.8, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+}
+
+/**
+ * Игрок-фермер
  */
 class Player {
-    constructor(x, y, config = {}) {
-        this.id = 'player';
-        this.x = x;
-        this.y = y;
-        this.targetX = x;
-        this.targetY = y;
-        this.radius = 18; // физический радиус столкновений
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.r = CONFIG.PLAYER_RADIUS;
+        this.vx = 0; this.vy = 0;
+        this.speed = CONFIG.PLAYER_SPEED;
+        this.catchRadius = CONFIG.CATCH_RADIUS;
+        this.swingCd = CONFIG.SWING_COOLDOWN;
+        this.dashCd = CONFIG.DASH_COOLDOWN;
 
-        // Механика ловли областью вокруг с кулдауном
-        this.catchRadius = config.CATCH_RADIUS || 48; // радиус кружка действия сачка вокруг
-        this.catchCooldown = config.CATCH_COOLDOWN || 1.0; // 1 секунда между поимками
-        this.catchCooldownTimer = 0; // текущий таймер отката
-        this.speed = config.PLAYER_SPEED || 235;
-
-        // Вектор непрерывного движения (WASD / D-Pad)
-        this.moveDir = { x: 0, y: 0 };
-        this.hasKeyboardInput = false;
-
-        this.facing = 1; // 1 - вправо, -1 - влево
-        this.isMoving = false;
-        this.walkAnimTimer = 0;
-
-        // Анимация взмаха сачком и области кружка
-        this.swingTimer = 0;
-        this.isSwinging = false;
-        this.swingCircleTimer = 0;
-
-        this.color = '#2563eb'; // синий комбинезон
-        this.hatColor = '#eab308'; // соломенная шляпа
+        this.cd = 0; this.cdMax = 1;
+        this.dashT = 0; this.dashCdT = 0;
+        this.dashX = 1; this.dashY = 0;
+        this.stun = 0;
+        this.invuln = 0;
+        this.facing = 1;
+        this.aimX = 1; this.aimY = 0;
+        this.walk = 0;
+        this.moving = false;
+        this.swingT = 0; this.swingDur = 0.24;
+        this.t = 0;
+        this.hat = 'straw';
+        this.trail = [];
+        this.trailT = 0;
+        this.inMud = false;
+        this.stepT = 0;
     }
 
-    /**
-     * Задать направление движения от клавиш WASD / Стрелок / D-Pad
-     */
-    setMoveDirection(dx, dy) {
-        this.moveDir.x = dx;
-        this.moveDir.y = dy;
-        this.hasKeyboardInput = (dx !== 0 || dy !== 0);
+    canSwing() { return this.cd <= 0 && this.stun <= 0; }
+
+    swing(missed) {
+        this.swingT = this.swingDur;
+        this.cdMax = this.swingCd * (missed ? CONFIG.SWING_MISS_FACTOR : 1);
+        this.cd = this.cdMax;
     }
 
-    /**
-     * Установка точки движения (по клику/тапу)
-     */
-    setTarget(tx, ty) {
-        this.targetX = tx;
-        this.targetY = ty;
-        this.hasKeyboardInput = false;
+    startDash(ix, iy) {
+        if (this.dashCdT > 0 || this.stun > 0) return false;
+        const l = Math.hypot(ix, iy);
+        if (l > 0.2) { this.dashX = ix / l; this.dashY = iy / l; } else { this.dashX = this.aimX; this.dashY = this.aimY; }
+        this.dashT = CONFIG.DASH_TIME;
+        this.dashCdT = this.dashCd;
+        this.invuln = CONFIG.DASH_TIME + 0.15;
+        return true;
     }
 
-    /**
-     * Сброс позиции
-     */
-    setPosition(x, y) {
-        this.x = x;
-        this.y = y;
-        this.targetX = x;
-        this.targetY = y;
-        this.moveDir.x = 0;
-        this.moveDir.y = 0;
-        this.isMoving = false;
-        this.hasKeyboardInput = false;
-        this.catchCooldownTimer = 0;
-    }
+    update(dt, g, ix, iy) {
+        this.t += dt;
+        if (this.cd > 0) this.cd -= dt;
+        if (this.dashCdT > 0) this.dashCdT -= dt;
+        if (this.swingT > 0) this.swingT -= dt;
+        if (this.invuln > 0) this.invuln -= dt;
+        for (let i = this.trail.length - 1; i >= 0; i--) { this.trail[i].life -= dt; if (this.trail[i].life <= 0) this.trail.splice(i, 1); }
 
-    /**
-     * Готов ли игрок поймать свинью (прошла ли 1 секунда кулдауна)
-     */
-    canCatch() {
-        return this.catchCooldownTimer <= 0;
-    }
+        const w = g.world;
+        this.inMud = this.dashT <= 0 && w.inMud(this.x, this.y + 10);
 
-    /**
-     * Запуск взмаха сачком и кружка области действия
-     */
-    swing() {
-        this.isSwinging = true;
-        this.swingTimer = 0.25;
-        this.swingCircleTimer = 0.22; // длительность отображения кружка сачка
-    }
-
-    /**
-     * Фиксация успешной поимки (включение 1-секундного кулдауна)
-     */
-    onSuccessfulCatch() {
-        this.catchCooldownTimer = this.catchCooldown;
-    }
-
-    /**
-     * Обновление состояния игрока
-     * @param {number} dt Дельта времени в секундах
-     * @param {number} arenaWidth 
-     * @param {number} arenaHeight 
-     * @param {Array<Object>} obstacles Список зданий и препятствий для коллизий
-     */
-    update(dt, arenaWidth, arenaHeight, obstacles = []) {
-        // Таймер перезарядки поимки
-        if (this.catchCooldownTimer > 0) {
-            this.catchCooldownTimer = Math.max(0, this.catchCooldownTimer - dt);
-        }
-
-        // Таймер взмаха сачком
-        if (this.isSwinging) {
-            this.swingTimer -= dt;
-            if (this.swingTimer <= 0) {
-                this.isSwinging = false;
-            }
-        }
-
-        if (this.swingCircleTimer > 0) {
-            this.swingCircleTimer -= dt;
-        }
-
-        let vx = 0;
-        let vy = 0;
-
-        // Перемещение по направлению ввода (WASD / Стрелки / D-Pad)
-        const len = Math.hypot(this.moveDir.x, this.moveDir.y);
-        if (len > 0.01) {
-            vx = (this.moveDir.x / len) * this.speed;
-            vy = (this.moveDir.y / len) * this.speed;
-            this.isMoving = true;
-            this.walkAnimTimer += dt * 11;
-
-            if (Math.abs(vx) > 5) {
-                this.facing = vx >= 0 ? 1 : -1;
-            }
-            this.targetX = this.x;
-            this.targetY = this.y;
+        if (this.stun > 0) {
+            this.stun -= dt;
+            this.vx *= Math.max(0, 1 - 5 * dt); this.vy *= Math.max(0, 1 - 5 * dt);
+            this.moving = false;
+        } else if (this.dashT > 0) {
+            this.dashT -= dt;
+            this.vx = this.dashX * CONFIG.DASH_SPEED; this.vy = this.dashY * CONFIG.DASH_SPEED;
+            this.moving = true;
+            this.trailT -= dt;
+            if (this.trailT <= 0) { this.trail.push({ x: this.x, y: this.y, life: 0.26, facing: this.facing, walk: this.walk }); this.trailT = 0.028; }
+            if (Math.random() < dt * 60) g.fx.dust(this.x, this.y + 14, 1, g.dustColor);
         } else {
-            // Если клавиши не зажаты — фермер спокойно стоит на месте
-            this.isMoving = false;
-            this.walkAnimTimer = 0;
-        }
-
-        // Применяем скорость
-        this.x += vx * dt;
-        this.y += vy * dt;
-
-        // Коллизии со зданиями (амбар, домики)
-        if (Array.isArray(obstacles)) {
-            for (const obs of obstacles) {
-                if (!obs) continue;
-                const pad = this.radius;
-                if (this.x > obs.x - pad && this.x < obs.x + obs.width + pad &&
-                    this.y > obs.y - pad && this.y < obs.y + obs.height + pad) {
-                    
-                    const dLeft = Math.abs(this.x - (obs.x - pad));
-                    const dRight = Math.abs(this.x - (obs.x + obs.width + pad));
-                    const dTop = Math.abs(this.y - (obs.y - pad));
-                    const dBottom = Math.abs(this.y - (obs.y + obs.height + pad));
-
-                    const minD = Math.min(dLeft, dRight, dTop, dBottom);
-                    if (minD === dLeft) this.x = obs.x - pad;
-                    else if (minD === dRight) this.x = obs.x + obs.width + pad;
-                    else if (minD === dTop) this.y = obs.y - pad;
-                    else if (minD === dBottom) this.y = obs.y + obs.height + pad;
+            let l = Math.hypot(ix, iy);
+            if (l > 1) { ix /= l; iy /= l; l = 1; }
+            let sp = this.speed * (g.buffs.speed > 0 ? 1.45 : 1) * (this.inMud ? 0.5 : 1);
+            const k = Math.min(1, 16 * dt);
+            this.vx += (ix * sp - this.vx) * k; this.vy += (iy * sp - this.vy) * k;
+            this.moving = l > 0.12;
+            if (this.moving) {
+                this.aimX = ix / l; this.aimY = iy / l;
+                this.stepT -= dt;
+                if (this.stepT <= 0) {
+                    this.stepT = this.inMud ? 0.14 : 0.2;
+                    g.fx.dust(this.x, this.y + 16, 1, this.inMud ? 'rgba(92,61,33,0.8)' : g.dustColor);
                 }
             }
         }
 
-        // Ограничение границами экрана
-        const margin = this.radius;
-        this.x = Math.max(margin, Math.min(arenaWidth - margin, this.x));
-        this.y = Math.max(margin, Math.min(arenaHeight - margin, this.y));
+        this.x += this.vx * dt; this.y += this.vy * dt;
+        if (this.moving) this.walk += dt * (this.dashT > 0 ? 26 : 13);
+        if (Math.abs(this.vx) > 20) this.facing = this.vx > 0 ? 1 : -1;
+        w.resolve(this, this.r);
     }
 
-    /**
-     * Отрисовка фермера, кружка ловли и индикатора перезарядки
-     */
-    draw(ctx) {
-        // 1. Отрисовка кружка области действия сачка при взмахе
-        if (this.swingCircleTimer > 0) {
+    draw(ctx, g) {
+        const R = g.reach;
+        // Зона действия сачка
+        ctx.save();
+        const ready = this.cd <= 0;
+        if (this.stun <= 0) {
+            ctx.lineWidth = g.pigInReach && ready ? 3.5 : 2.2;
+            ctx.setLineDash([9, 8]);
+            ctx.lineDashOffset = -this.t * 14;
+            if (ready) {
+                ctx.strokeStyle = g.pigInReach ? 'rgba(255,240,150,0.95)' : 'rgba(255,255,255,0.3)';
+                ctx.beginPath(); ctx.arc(this.x, this.y + 4, R, 0, Math.PI * 2); ctx.stroke();
+                if (g.pigInReach) { ctx.fillStyle = 'rgba(255,240,150,0.10)'; ctx.fill(); }
+            } else {
+                ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+                ctx.beginPath(); ctx.arc(this.x, this.y + 4, R, 0, Math.PI * 2); ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 3;
+                const k = 1 - this.cd / this.cdMax;
+                ctx.beginPath(); ctx.arc(this.x, this.y + 4, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k); ctx.stroke();
+            }
+        }
+        ctx.restore();
+
+        // Взмах
+        if (this.swingT > 0) {
+            const p = 1 - this.swingT / this.swingDur, e = U.easeOut(p);
             ctx.save();
-            const progress = 1 - (this.swingCircleTimer / 0.22);
-            const currentR = this.catchRadius * (0.6 + 0.4 * progress);
-
-            // Полупрозрачный круг области действия
-            ctx.fillStyle = 'rgba(245, 158, 11, 0.16)';
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, currentR, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Яркий контур кружка сачка
-            ctx.strokeStyle = `rgba(245, 158, 11, ${0.9 - progress * 0.7})`;
-            ctx.lineWidth = 2.5;
-            ctx.setLineDash([6, 4]);
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, currentR, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.fillStyle = `rgba(255,255,255,${0.2 * (1 - p)})`;
+            ctx.beginPath(); ctx.arc(this.x, this.y + 4, R * (0.5 + 0.5 * e), 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = `rgba(255,255,255,${0.95 * (1 - p)})`;
+            ctx.lineWidth = 3 + 11 * (1 - p); ctx.lineCap = 'round';
+            const a0 = -Math.PI * 0.7 + e * Math.PI * 1.9 * this.facing;
+            ctx.beginPath(); ctx.arc(this.x, this.y + 4, R * (0.62 + 0.3 * e), a0, a0 + Math.PI * 1.1 * this.facing, this.facing < 0); ctx.stroke();
             ctx.restore();
         }
 
-        // 2. Индикатор перезарядки над головой (дуга кулдауна 1 сек)
-        if (this.catchCooldownTimer > 0) {
-            ctx.save();
-            const cdRatio = this.catchCooldownTimer / this.catchCooldown;
-            const indX = this.x;
-            const indY = this.y - 34;
-
-            // Фоновая дуга
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
-            ctx.lineWidth = 3.5;
-            ctx.beginPath();
-            ctx.arc(indX, indY, 11, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // Заполняющая дуга готовности
-            ctx.strokeStyle = '#ef4444'; // красный при перезарядке
-            ctx.lineWidth = 3.5;
-            ctx.beginPath();
-            // Рисуем оставшуюся долю перезарядки
-            ctx.arc(indX, indY, 11, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * (1 - cdRatio)));
-            ctx.stroke();
-
-            // Маленький значок сачка внутри
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 9px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('⏳', indX, indY);
-            ctx.restore();
+        // Шлейф рывка
+        for (const tr of this.trail) {
+            drawFarmer(ctx, { x: tr.x, y: tr.y, facing: tr.facing, walk: tr.walk, moving: true, t: 0, suit: '#7dd3fc', shirt: '#e0f2fe', hat: this.hat, swingK: -1, alpha: tr.life * 1.6, stun: 0 });
         }
 
-        // 3. Сам персонаж-фермер
-        ctx.save();
-        ctx.translate(this.x, this.y);
+        const blink = this.invuln > 0 && this.dashT <= 0 && Math.sin(this.t * 50) > 0;
+        drawFarmer(ctx, {
+            x: this.x, y: this.y, facing: this.facing, walk: this.walk, moving: this.moving, t: this.t,
+            suit: g.buffs.speed > 0 ? '#f59e0b' : '#3b82f6', hat: this.hat, stun: this.stun, dashing: this.dashT > 0,
+            swingK: this.swingT > 0 ? 1 - this.swingT / this.swingDur : -1, alpha: blink ? 0.55 : 1
+        });
 
-        // Тень под персонажем
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
-        ctx.beginPath();
-        ctx.ellipse(0, 16, 16, 7, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Покачивание при ходьбе
-        const bobOffset = this.isMoving ? Math.sin(this.walkAnimTimer) * 2.5 : 0;
-        ctx.translate(0, bobOffset);
-
-        // Поворот по горизонтали
-        ctx.scale(this.facing, 1);
-
-        // Комбинезон
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.roundRect(-12, -4, 24, 22, [4, 4, 6, 6]);
-        ctx.fill();
-
-        // Ремни комбинезона
-        ctx.strokeStyle = '#1e3a8a';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-6, -4);
-        ctx.lineTo(-6, 12);
-        ctx.moveTo(6, -4);
-        ctx.lineTo(6, 12);
-        ctx.stroke();
-
-        // Ноги
-        const legSwing = this.isMoving ? Math.sin(this.walkAnimTimer) * 4 : 0;
-        ctx.fillStyle = '#451a03';
-        ctx.fillRect(-9, 18 + legSwing, 6, 6);
-        ctx.fillRect(3, 18 - legSwing, 6, 6);
-
-        // Голова
-        ctx.fillStyle = '#fed7aa';
-        ctx.beginPath();
-        ctx.arc(0, -12, 10, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Лицо
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.arc(4, -13, 1.8, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#9a3412';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(3, -9, 3, 0.1, Math.PI * 0.8);
-        ctx.stroke();
-
-        // Соломенная шляпа
-        ctx.fillStyle = this.hatColor;
-        ctx.beginPath();
-        ctx.roundRect(-8, -26, 16, 8, [3, 3, 0, 0]);
-        ctx.fill();
-
-        ctx.fillStyle = '#dc2626';
-        ctx.fillRect(-8, -20, 16, 3);
-
-        ctx.fillStyle = this.hatColor;
-        ctx.beginPath();
-        ctx.ellipse(0, -18, 18, 5, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Сачок
-        ctx.save();
-        ctx.translate(10, 2);
-
-        if (this.isSwinging) {
-            ctx.rotate(Math.PI / 4 + Math.sin((0.25 - this.swingTimer) * 20) * 0.7);
+        // Индикатор перезарядки рывка
+        if (this.dashCdT > 0) {
+            const k = 1 - this.dashCdT / this.dashCd;
+            ctx.fillStyle = 'rgba(30,20,10,0.55)'; ctx.beginPath(); ctx.roundRect(this.x - 15, this.y + 26, 30, 6, 3); ctx.fill();
+            ctx.fillStyle = '#7dd3fc'; ctx.beginPath(); ctx.roundRect(this.x - 14, this.y + 27, 28 * k, 4, 2); ctx.fill();
         }
-
-        ctx.strokeStyle = '#854d0e';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(-2, 4);
-        ctx.lineTo(16, -10);
-        ctx.stroke();
-
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.ellipse(18, -12, 7, 11, Math.PI / 4, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.fillStyle = 'rgba(241, 245, 249, 0.55)';
-        ctx.beginPath();
-        ctx.ellipse(21, -10, 6, 9, Math.PI / 4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-
-        ctx.restore();
     }
 }
