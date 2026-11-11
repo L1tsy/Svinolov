@@ -2,16 +2,17 @@
  * Класс напарника-ловца (автономный помощник, нанимаемый с 10 дня)
  */
 class Helper {
-    constructor(x, y, config = {}) {
-        this.id = 'helper';
+    constructor(x, y, config = {}, index = 0) {
+        this.id = 'helper_' + index;
+        this.helperIndex = index + 1;
         this.x = x;
         this.y = y;
         this.radius = 18;
 
         // Скорость и радиус сачка помощника
-        this.speed = (config.PLAYER_SPEED || 235) * 0.88; // чуть медленнее игрока
+        this.speed = (config.PLAYER_SPEED || 235) * 0.9;
         this.catchRadius = (config.CATCH_RADIUS || 52) * 0.95;
-        this.catchCooldown = 1.2; // перезарядка помощника
+        this.catchCooldown = 1.1; // перезарядка помощника
         this.catchCooldownTimer = 0;
 
         // Вектор и анимация
@@ -22,9 +23,17 @@ class Helper {
         this.isSwinging = false;
         this.swingCircleTimer = 0;
 
-        // Внешность: зелёный комбинезон и бежевая кепка
-        this.color = '#15803d'; // зеленый рабочий комбинезон
-        this.hatColor = '#d97706'; // темно-соломенная кепка
+        // Палитра костюмов для разных напарников
+        const PALETTE = [
+            { suit: '#15803d', hat: '#d97706' }, // 1: зеленый комбинезон
+            { suit: '#4338ca', hat: '#b45309' }, // 2: индиго
+            { suit: '#c2410c', hat: '#65a30d' }, // 3: терракотовый
+            { suit: '#7e22ce', hat: '#0284c7' }, // 4: фиолетовый
+            { suit: '#0f766e', hat: '#e11d48' }  // 5: бирюзовый
+        ];
+        const pal = PALETTE[index % PALETTE.length];
+        this.color = pal.suit;
+        this.hatColor = pal.hat;
     }
 
     /**
@@ -167,19 +176,19 @@ class Helper {
         ctx.ellipse(0, 16, 16, 7, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Бейджик над головой «🤝 НАПАРНИК»
-        ctx.fillStyle = '#15803d';
+        // Бейджик над головой «🤝 НАПАРНИК #N»
+        ctx.fillStyle = this.color;
         ctx.beginPath();
-        ctx.roundRect(-30, -38, 60, 14, 4);
+        ctx.roundRect(-36, -38, 72, 14, 4);
         ctx.fill();
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1;
         ctx.stroke();
 
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 9px sans-serif';
+        ctx.font = 'bold 8.5px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('🤝 НАПАРНИК', 0, -28);
+        ctx.fillText(`🤝 НАПАРНИК #${this.helperIndex}`, 0, -28);
 
         // Покачивание
         const bobOffset = this.isMoving ? Math.sin(this.walkAnimTimer) * 2.5 : 0;

@@ -28,10 +28,16 @@
                 <span id="coin-count">0</span>
             </div>
 
-            <!-- Кнопка найма напарника (с 10 уровня за 100 монет) -->
+            <!-- Кнопка Магазина улучшений -->
+            <button id="btn-open-shop" class="hud-card btn-shop" title="Открыть магазин улучшений">
+                <span class="icon">🛒</span>
+                <span>Магазин</span>
+            </button>
+
+            <!-- Кнопка быстрого найма напарника (с 10 дня) -->
             <button id="btn-buy-helper" class="hud-card btn-helper locked" title="Нанять напарника-ловца">
                 <span id="helper-icon" class="icon">🔒</span>
-                <span id="helper-btn-text">Напарник (10 дн.)</span>
+                <span id="helper-btn-text">Напарник</span>
             </button>
 
             <button id="btn-reset" class="btn-icon" title="Сбросить прогресс">🔄</button>
@@ -70,6 +76,22 @@
                 <button id="btn-next-day" class="btn-primary">Начать следующий день ➜</button>
             </div>
         </div>
+
+        <!-- Модальное окно Магазина улучшений -->
+        <div id="shop-modal" class="modal-overlay hidden">
+            <div class="modal-card shop-modal-card">
+                <div class="shop-header">
+                    <div class="shop-title-group">
+                        <h2 class="modal-title" style="margin-bottom:0;">🛒 Магазин улучшений</h2>
+                        <div class="shop-balance">Ваш баланс: <strong id="shop-coin-count">0</strong> 🪙</div>
+                    </div>
+                    <button id="btn-close-shop" class="btn-close-modal" title="Закрыть">✕</button>
+                </div>
+                <div id="shop-items-list" class="shop-items-container">
+                    <!-- Карточки улучшений генерируются через js/shop.js -->
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Подключение скриптов в строгом порядке зависимостей -->
@@ -77,6 +99,7 @@
     <script src="js/player.js"></script>
     <script src="js/helper.js"></script>
     <script src="js/pig.js"></script>
+    <script src="js/shop.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/game.js"></script>
 </body>

@@ -24,13 +24,18 @@ const CONFIG = {
     BASE_PIGS_COUNT: 2,        // В начале всего 2 свиньи для мягкого старта
     COIN_REWARD_PER_PIG: 1,    // Монет за обычную пойманную свинью
 
-    // Напарник (дополнительный ловец)
-    HELPER_REQUIRED_DAY: 10,   // Доступен с 10 дня
-    HELPER_COST: 100,          // Стоимость найма: 100 очков/монет
+    // Напарники (каждые 10-15 дней, 1-й: 50, 2-й: 75, 3-й: 100...)
+    HELPER_BASE_DAY: 10,       // 1-й доступен с 10 дня
+    HELPER_STEP_DAY: 10,       // Следующие каждые 10 дней (день 20, 30...)
+    HELPER_BASE_COST: 50,      // 1-й стоит 50 монет
+    HELPER_STEP_COST: 25,      // +25 монет за каждого следующего
 
     // Большая свинья
     BIG_PIG_START_DAY: 15,     // Появляется с 15-20 дня
     BIG_PIG_REWARD: 10,        // Большая свинья приносит 10 монет
+
+    // Расширение карты
+    EXPANDED_WORLD_DAY: 20,    // С 20 дня открываются новые зоны деревни
 
     // Бонус за быстрый улов
     SPEED_BONUS_BASE_TIME: 14, // Базовое целевое время (секунды)
@@ -56,9 +61,10 @@ class Game {
         this.canvas = document.getElementById('game-canvas');
         this.ctx = this.canvas.getContext('2d');
 
-        // Модули сохранения и интерфейса
+        // Модули сохранения, интерфейса и магазина
         this.storage = new StorageManager();
         this.ui = new UI();
+        this.shop = new Shop();
 
         // Загрузка состояния
         const savedData = this.storage.load();
@@ -67,9 +73,16 @@ class Game {
         this.totalPigsCaught = savedData.totalPigsCaught || 0;
         this.upgrades = savedData.upgrades || {};
 
-        // Размеры игрового поля
+        // Размеры окна и виртуального мира
         this.width = window.innerWidth;
         this.height = window.innerHeight;
+        this.isExpandedWorld = this.day >= CONFIG.EXPANDED_WORLD_DAY;
+        this.worldWidth = this.isExpandedWorld ? Math.floor(this.width * 1.6) : this.width;
+        this.worldHeight = this.isExpandedWorld ? Math.floor(this.height * 1.6) : this.height;
+
+        // Камера
+        this.camX = 0;
+        this.camY = 0;
 
         // Центральная база (Амбар)
         this.barn = {
@@ -86,16 +99,14 @@ class Game {
         this.houses = [];
 
         // Игрок (фермер-свинолов)
-        this.player = new Player(this.width / 2, this.height / 2 + 120, CONFIG);
+        this.player = new Player(this.worldWidth / 2, this.worldHeight / 2 + 120, CONFIG);
         this.catchers = [this.player];
 
-        // Напарник (дополнительный ловец)
-        this.hasHelper = !!(this.upgrades && this.upgrades.hasHelper);
-        this.helper = null;
-        if (this.hasHelper) {
-            this.helper = new Helper(this.width / 2 + 50, this.height / 2 + 120, CONFIG);
-            this.catchers.push(this.helper);
-        }
+        // Список напарников
+        this.helpers = [];
+
+        // Применяем улучшения и создаем напарников
+        this.applyUpgrades();
 
         // Таймер для бонуса быстрого улова
         this.dayStartTime = performance.now();
@@ -113,6 +124,7 @@ class Game {
         // Декорации поля (пучки травы, тропинки, цветочки)
         this.decorations = [];
         this.paths = [];
+        this.extraZones = []; // сад, тыквы, пруд
         this.windmillAngle = 0; // вращение лопастей мельницы
 
         // Игровой цикл
@@ -120,6 +132,50 @@ class Game {
         this.isRunning = false;
 
         this.init();
+    }
+
+    /**
+     * Применение купленных улучшений к персонажу и напарникам
+     */
+    applyUpgrades() {
+        const spdLvl = this.upgrades.speedLevel || 1;
+        const radLvl = this.upgrades.radiusLevel || 1;
+        const cdLvl = this.upgrades.cooldownLevel || 1;
+
+        // Скорость игрока
+        this.player.speed = CONFIG.PLAYER_SPEED * (1 + (spdLvl - 1) * 0.15);
+
+        // Радиус зоны сачка
+        this.player.catchRadius = CONFIG.CATCH_RADIUS * (1 + (radLvl - 1) * 0.15);
+
+        // Кулдаун сачка
+        this.player.catchCooldown = Math.max(0.4, CONFIG.CATCH_COOLDOWN - (cdLvl - 1) * 0.15);
+
+        // Напарники
+        const count = this.upgrades.helpersCount || 0;
+        this.helpers = [];
+        this.catchers = [this.player];
+
+        for (let i = 0; i < count; i++) {
+            const spawnX = (this.houses[0] ? this.houses[0].x + 40 : this.worldWidth / 2) + (i * 22);
+            const spawnY = (this.houses[0] ? this.houses[0].y + 90 : this.worldHeight / 2 + 100) + (i * 18);
+            const h = new Helper(spawnX, spawnY, CONFIG, i);
+            this.helpers.push(h);
+            this.catchers.push(h);
+        }
+    }
+
+    /**
+     * Добавление нового купленного напарника
+     */
+    addNewHelper() {
+        const index = (this.upgrades.helpersCount || 1) - 1;
+        const spawnX = (this.houses[0] ? this.houses[0].x + 40 : this.worldWidth / 2) + (index * 22);
+        const spawnY = (this.houses[0] ? this.houses[0].y + 90 : this.worldHeight / 2 + 100) + (index * 18);
+        const h = new Helper(spawnX, spawnY, CONFIG, index);
+        this.helpers.push(h);
+        this.catchers.push(h);
+        this.updateHUDAndHelperButton();
     }
 
     /**
@@ -133,7 +189,16 @@ class Game {
         this.setupPointerInput();
         this.setupMobileControls();
 
-        // Слушатель кнопки найма напарника
+        // Кнопка открытия Магазина улучшений
+        const btnOpenShop = document.getElementById('btn-open-shop');
+        if (btnOpenShop) {
+            btnOpenShop.addEventListener('click', () => {
+                this.ui.initAudio();
+                this.shop.open(this);
+            });
+        }
+
+        // Слушатель кнопки быстрого найма напарника в HUD
         if (this.ui.btnBuyHelper) {
             this.ui.btnBuyHelper.addEventListener('click', () => {
                 this.tryHireHelper();
@@ -166,6 +231,11 @@ class Game {
         this.width = window.innerWidth;
         this.height = window.innerHeight;
 
+        // Расширение карты деревни с 20-го дня
+        this.isExpandedWorld = this.day >= CONFIG.EXPANDED_WORLD_DAY;
+        this.worldWidth = this.isExpandedWorld ? Math.floor(this.width * 1.6) : this.width;
+        this.worldHeight = this.isExpandedWorld ? Math.floor(this.height * 1.6) : this.height;
+
         const dpr = window.devicePixelRatio || 1;
         this.canvas.width = this.width * dpr;
         this.canvas.height = this.height * dpr;
@@ -175,15 +245,15 @@ class Game {
         this.ctx.resetTransform();
         this.ctx.scale(dpr, dpr);
 
-        // База (Амбар) строго в центре экрана
-        this.barn.width = Math.min(220, Math.max(180, Math.floor(this.width * 0.22)));
-        this.barn.height = Math.min(160, Math.max(130, Math.floor(this.height * 0.22)));
+        // База (Амбар) строго в центре мира
+        this.barn.width = Math.min(220, Math.max(180, Math.floor(this.worldWidth * 0.18)));
+        this.barn.height = Math.min(160, Math.max(130, Math.floor(this.worldHeight * 0.18)));
         this.barn.doorWidth = Math.floor(this.barn.width * 0.28);
         this.barn.doorHeight = Math.floor(this.barn.height * 0.38);
-        this.barn.x = Math.floor((this.width - this.barn.width) / 2);
-        this.barn.y = Math.floor((this.height - this.barn.height) / 2 - 20);
+        this.barn.x = Math.floor((this.worldWidth - this.barn.width) / 2);
+        this.barn.y = Math.floor((this.worldHeight - this.barn.height) / 2 - 20);
 
-        // Расстановка декоративных домиков по краям деревни
+        // Расстановка домиков и дополнительных зон деревни
         this.setupVillageHouses();
 
         // Генерация текстуры травы и тропинок
@@ -194,48 +264,64 @@ class Game {
      * Создание декоративных домиков деревни
      */
     setupVillageHouses() {
+        const W = this.worldWidth;
+        const H = this.worldHeight;
+
         this.houses = [
-            // 1. Уютный жилой дом фермера с трубой (слева вверху)
+            // 1. Уютный жилой дом фермера с трубой (северо-запад)
             {
                 type: 'farmhouse',
-                x: Math.max(25, Math.floor(this.width * 0.08)),
-                y: Math.max(25, Math.floor(this.height * 0.08)),
+                x: Math.max(25, Math.floor(W * 0.1)),
+                y: Math.max(25, Math.floor(H * 0.1)),
                 width: 130,
                 height: 105,
                 color: '#78350f',
                 roofColor: '#b91c1c'
             },
-            // 2. Ветряная мельница (справа вверху)
+            // 2. Ветряная мельница (северо-восток)
             {
                 type: 'windmill',
-                x: Math.min(this.width - 150, Math.floor(this.width * 0.82)),
-                y: Math.max(30, Math.floor(this.height * 0.1)),
+                x: Math.min(W - 150, Math.floor(W * 0.82)),
+                y: Math.max(30, Math.floor(H * 0.1)),
                 width: 100,
                 height: 125,
                 color: '#e2e8f0',
                 roofColor: '#854d0e'
             },
-            // 3. Сарайчик для сена (слева внизу)
+            // 3. Сарайчик для сена (юго-запад)
             {
                 type: 'shed',
-                x: Math.max(30, Math.floor(this.width * 0.1)),
-                y: Math.min(this.height - 130, Math.floor(this.height * 0.72)),
+                x: Math.max(30, Math.floor(W * 0.1)),
+                y: Math.min(H - 130, Math.floor(H * 0.78)),
                 width: 115,
                 height: 90,
                 color: '#92400e',
                 roofColor: '#ca8a04'
             },
-            // 4. Курятник с заборчиком (справа внизу)
+            // 4. Курятник с заборчиком (юго-восток)
             {
                 type: 'coop',
-                x: Math.min(this.width - 150, Math.floor(this.width * 0.8)),
-                y: Math.min(this.height - 125, Math.floor(this.height * 0.7)),
+                x: Math.min(W - 150, Math.floor(W * 0.82)),
+                y: Math.min(H - 125, Math.floor(H * 0.78)),
                 width: 110,
                 height: 85,
                 color: '#a16207',
                 roofColor: '#dc2626'
             }
         ];
+
+        // Дополнительные зоны расширенной карты (сад, тыквы, пруд)
+        this.extraZones = [];
+        if (this.isExpandedWorld) {
+            this.extraZones = [
+                // 🍎 Яблоневый сад
+                { type: 'orchard', x: Math.floor(W * 0.05), y: Math.floor(H * 0.42), width: 140, height: 120 },
+                // 🎃 Огород с тыквами
+                { type: 'pumpkins', x: Math.floor(W * 0.83), y: Math.floor(H * 0.42), width: 130, height: 110 },
+                // 🦆 Пруд с кувшинками
+                { type: 'pond', x: Math.floor(W * 0.44), y: Math.floor(H * 0.82), width: 150, height: 95 }
+            ];
+        }
     }
 
     /**
@@ -270,13 +356,16 @@ class Game {
     generateEnvironment() {
         this.decorations = [];
 
+        const W = this.worldWidth;
+        const H = this.worldHeight;
+
         // Грунтовые тропинки от центрального амбара к домикам
         const barnCenterX = this.barn.x + this.barn.width / 2;
         const barnBottomY = this.barn.y + this.barn.height;
 
         this.paths = [
             // Главная тропа вниз от ворот амбара
-            { fromX: barnCenterX, fromY: barnBottomY, toX: barnCenterX, toY: this.height - 40, width: 34 },
+            { fromX: barnCenterX, fromY: barnBottomY, toX: barnCenterX, toY: H - 40, width: 34 },
             // Тропа к дому фермера
             { fromX: barnCenterX - 40, fromY: this.barn.y + 40, toX: this.houses[0].x + 60, toY: this.houses[0].y + 90, width: 22 },
             // Тропа к мельнице
@@ -288,10 +377,10 @@ class Game {
         ];
 
         // Пучки травы, полевые цветы и камушки
-        const count = Math.floor((this.width * this.height) / 7500);
+        const count = Math.floor((W * H) / 7500);
         for (let i = 0; i < count; i++) {
-            const x = Math.random() * this.width;
-            const y = Math.random() * this.height;
+            const x = Math.random() * W;
+            const y = Math.random() * H;
 
             const r = Math.random();
             let type = 'tuft'; // пучок сочной травы
@@ -371,8 +460,8 @@ class Game {
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const clientY = e.touches ? e.touches[0].clientY : e.clientY;
             return {
-                x: clientX - rect.left,
-                y: clientY - rect.top
+                x: clientX - rect.left + this.camX,
+                y: clientY - rect.top + this.camY
             };
         };
 
@@ -476,38 +565,31 @@ class Game {
     }
 
     /**
-     * Попытка нанять напарника (доступно с 10 дня за 100 монет)
+     * Попытка нанять напарника (1-й за 50, 2-й за 75, 3-й за 100...)
      */
     tryHireHelper() {
         this.ui.initAudio();
-        if (this.hasHelper) {
-            this.ui.addFloatingText(this.player.x, this.player.y - 25, 'Напарник уже в строю!', '#22c55e');
+        const currentCount = this.upgrades.helpersCount || 0;
+        const nextCost = CONFIG.HELPER_BASE_COST + currentCount * CONFIG.HELPER_STEP_COST;
+        const reqDay = CONFIG.HELPER_BASE_DAY + currentCount * CONFIG.HELPER_STEP_DAY;
+
+        if (this.day < reqDay) {
+            this.ui.addFloatingText(this.player.x, this.player.y - 25, `Доступно с ${reqDay} дня!`, '#ef4444');
             return;
         }
 
-        if (this.day < CONFIG.HELPER_REQUIRED_DAY) {
-            this.ui.addFloatingText(this.player.x, this.player.y - 25, `Откроется на ${CONFIG.HELPER_REQUIRED_DAY} дне!`, '#ef4444');
-            return;
-        }
-
-        if (this.coins < CONFIG.HELPER_COST) {
-            this.ui.addFloatingText(this.player.x, this.player.y - 25, `Нужно ${CONFIG.HELPER_COST} 🪙 (у вас ${this.coins})`, '#ef4444');
+        if (this.coins < nextCost) {
+            this.ui.addFloatingText(this.player.x, this.player.y - 25, `Нужно ${nextCost} 🪙 (у вас ${this.coins})`, '#ef4444');
             return;
         }
 
         // Успешная покупка
-        this.coins -= CONFIG.HELPER_COST;
-        this.hasHelper = true;
-        this.upgrades.hasHelper = true;
-
-        // Появление напарника у крыльца дома фермера
-        const spawnX = this.houses[0] ? this.houses[0].x + 40 : this.width / 2 + 50;
-        const spawnY = this.houses[0] ? this.houses[0].y + 90 : this.height / 2 + 100;
-        this.helper = new Helper(spawnX, spawnY, CONFIG);
-        this.catchers.push(this.helper);
+        this.coins -= nextCost;
+        this.upgrades.helpersCount = currentCount + 1;
+        this.addNewHelper();
 
         this.ui.playHireSound();
-        this.ui.addFloatingText(this.player.x, this.player.y - 25, `🤝 Напарник нанят! -${CONFIG.HELPER_COST} 🪙`, '#22c55e');
+        this.ui.addFloatingText(this.player.x, this.player.y - 25, `🤝 Напарник #${this.upgrades.helpersCount} нанят! -${nextCost} 🪙`, '#22c55e');
         this.updateHUDAndHelperButton();
         this.saveProgress();
     }
@@ -517,7 +599,18 @@ class Game {
      */
     updateHUDAndHelperButton() {
         this.ui.updateHUD(this.coins, this.day, this.caughtDayPigs, this.totalDayPigs);
-        this.ui.updateHelperButton(this.day, this.coins, this.hasHelper, CONFIG.HELPER_REQUIRED_DAY, CONFIG.HELPER_COST);
+        const count = this.upgrades.helpersCount || 0;
+        const nextCost = CONFIG.HELPER_BASE_COST + count * CONFIG.HELPER_STEP_COST;
+        const reqDay = CONFIG.HELPER_BASE_DAY + count * CONFIG.HELPER_STEP_DAY;
+        this.ui.updateHelperButton(this.day, this.coins, false, reqDay, nextCost);
+
+        if (this.ui.helperBtnText) {
+            if (this.day >= reqDay) {
+                this.ui.helperBtnText.textContent = `Напарник #${count + 1} (${nextCost}🪙)`;
+            } else {
+                this.ui.helperBtnText.textContent = `Напарник #${count + 1} (${reqDay}дн)`;
+            }
+        }
     }
 
     /**
@@ -732,23 +825,39 @@ class Game {
         // Препятствия
         const obstacles = this.getObstacles();
 
+        // Плавное движение камеры за фермером
+        if (this.isExpandedWorld) {
+            const targetCamX = this.player.x - this.width / 2;
+            const targetCamY = this.player.y - this.height / 2;
+            this.camX += (targetCamX - this.camX) * 0.12;
+            this.camY += (targetCamY - this.camY) * 0.12;
+
+            this.camX = Math.max(0, Math.min(this.worldWidth - this.width, this.camX));
+            this.camY = Math.max(0, Math.min(this.worldHeight - this.height, this.camY));
+        } else {
+            this.camX = 0;
+            this.camY = 0;
+        }
+
+        // Препятствия
+        const obstacles = this.getObstacles();
+
         // 1. Игрок
-        this.player.update(safeDt, this.width, this.height, obstacles);
+        this.player.update(safeDt, this.worldWidth, this.worldHeight, obstacles);
 
-        // 2. Напарник (автономная ловля свиней и помощь с Большой свиньей)
-        if (this.helper) {
-            this.helper.update(safeDt, this.width, this.height, obstacles, this.pigs);
+        // 2. Все нанятые напарники (автономная ловля свиней)
+        for (const helper of this.helpers) {
+            helper.update(safeDt, this.worldWidth, this.worldHeight, obstacles, this.pigs);
 
-            // Напарник ловит обычную свинью, если подошёл в упор
-            if (this.helper.canCatch()) {
+            if (helper.canCatch()) {
                 for (const pig of this.pigs) {
                     if (pig.caught || pig.isInBarn) continue;
 
-                    const dist = Math.hypot(pig.x - this.helper.x, pig.y - this.helper.y);
-                    // Обычная свинья: напарник ловит сам!
-                    if (!pig.isBig && dist <= this.helper.catchRadius + pig.radius) {
-                        this.helper.swing();
-                        this.helper.onSuccessfulCatch();
+                    const dist = Math.hypot(pig.x - helper.x, pig.y - helper.y);
+                    // Обычная свинья: напарник ловит самостоятельно!
+                    if (!pig.isBig && dist <= helper.catchRadius + pig.radius) {
+                        helper.swing();
+                        helper.onSuccessfulCatch();
                         this.catchPig(pig);
                         break;
                     }
@@ -767,69 +876,269 @@ class Game {
 
         // 4. Свиньи (паника, блуждание, обход зданий)
         for (const pig of this.pigs) {
-            pig.update(safeDt, this.width, this.height, threats, obstacles);
+            pig.update(safeDt, this.worldWidth, this.worldHeight, threats, obstacles);
         }
     }
 
     /**
-     * Отрисовка всего игрового мира
+     * Отрисовка игрового мира с виртуальной камерой
      */
     draw(dt) {
         const ctx = this.ctx;
 
-        // 1. Сочный природный стиль луга и газона
+        // 1. Сдвиг виртуальной камеры
+        ctx.save();
+        ctx.translate(-Math.round(this.camX), -Math.round(this.camY));
+
+        // Природный стиль луга на весь мир
         this.drawGrassField(ctx);
 
-        // 2. Грунтовые тропинки деревни
+        // Грунтовые тропинки деревни
         this.drawPaths(ctx);
 
-        // 3. Декорации (пучки травы, клевер, ромашки)
+        // Дополнительные зоны расширенной карты (сад, тыквы, пруд)
+        this.drawExtraZones(ctx);
+
+        // Декорации (пучки травы, клевер, ромашки)
         this.drawDecorations(ctx);
 
-        // 4. Декоративные домики деревни
+        // Декоративные домики деревни
         this.drawVillageHouses(ctx);
 
-        // 5. Центральная база — Амбар
+        // Центральная база — Амбар
         this.drawBarn(ctx);
 
-        // 6. Свиньи
+        // Свиньи
         for (const pig of this.pigs) {
             pig.draw(ctx);
         }
 
-        // 7. Фермер с сачком
+        // Фермер и напарники с сачками
         for (const catcher of this.catchers) {
             catcher.draw(ctx);
         }
 
-        // 8. Плавающие надписи (+1 🪙)
+        // Плавающие надписи (+1 🪙, +10 🪙)
         this.ui.updateAndDrawFloatingTexts(ctx, dt);
+
+        ctx.restore();
+
+        // 2. Радар-миникарта (на расширенной карте после 20 дня)
+        if (this.isExpandedWorld) {
+            this.drawMinimap(ctx);
+        }
     }
 
     /**
-     * Отрисовка стильного мягкого газона
+     * Отрисовка стильного мягкого газона на весь мир
      */
     drawGrassField(ctx) {
+        const W = this.worldWidth;
+        const H = this.worldHeight;
+
         // Базовый сочный травяной цвет
         ctx.fillStyle = '#47823b';
-        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.fillRect(0, 0, W, H);
 
         // Мягкий природный градиент освещения луга
         const grad = ctx.createRadialGradient(
-            this.width / 2, this.height / 2, 80,
-            this.width / 2, this.height / 2, Math.max(this.width, this.height) * 0.75
+            W / 2, H / 2, 90,
+            W / 2, H / 2, Math.max(W, H) * 0.75
         );
         grad.addColorStop(0, 'rgba(102, 187, 85, 0.22)');
         grad.addColorStop(1, 'rgba(28, 59, 23, 0.35)');
         ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.fillRect(0, 0, W, H);
 
         // Органические мягкие полосы поля
         ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
         const stripeSize = 64;
-        for (let x = 0; x < this.width; x += stripeSize * 2) {
-            ctx.fillRect(x, 0, stripeSize, this.height);
+        for (let x = 0; x < W; x += stripeSize * 2) {
+            ctx.fillRect(x, 0, stripeSize, H);
         }
+    }
+
+    /**
+     * Отрисовка зон расширенной карты (яблоневый сад, тыквы, пруд)
+     */
+    drawExtraZones(ctx) {
+        if (!this.isExpandedWorld) return;
+
+        for (const zone of this.extraZones) {
+            ctx.save();
+
+            if (zone.type === 'orchard') {
+                // 🍎 Яблоневый сад
+                ctx.fillStyle = 'rgba(34, 197, 94, 0.15)';
+                ctx.beginPath();
+                ctx.roundRect(zone.x, zone.y, zone.width, zone.height, 14);
+                ctx.fill();
+                ctx.strokeStyle = '#15803d';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([6, 6]);
+                ctx.stroke();
+
+                // Вывеска сада
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.fillText('🍎 ЯБЛОНЕВЫЙ САД', zone.x + 12, zone.y - 6);
+
+                // Яблони
+                const trees = [
+                    { x: zone.x + 35, y: zone.y + 40 },
+                    { x: zone.x + 105, y: zone.y + 45 },
+                    { x: zone.x + 70, y: zone.y + 90 }
+                ];
+                for (const t of trees) {
+                    // Ствол
+                    ctx.fillStyle = '#78350f';
+                    ctx.fillRect(t.x - 5, t.y, 10, 20);
+                    // Крона
+                    ctx.fillStyle = '#16a34a';
+                    ctx.beginPath();
+                    ctx.arc(t.x, t.y - 4, 18, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Спелые красные яблоки
+                    ctx.fillStyle = '#ef4444';
+                    ctx.beginPath();
+                    ctx.arc(t.x - 7, t.y - 6, 3, 0, Math.PI * 2);
+                    ctx.arc(t.x + 6, t.y - 8, 3, 0, Math.PI * 2);
+                    ctx.arc(t.x + 2, t.y + 2, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+            } else if (zone.type === 'pumpkins') {
+                // 🎃 Огород с тыквами
+                ctx.fillStyle = 'rgba(180, 83, 9, 0.18)';
+                ctx.beginPath();
+                ctx.roundRect(zone.x, zone.y, zone.width, zone.height, 12);
+                ctx.fill();
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.fillText('🎃 ОГОРОД С ТЫКВАМИ', zone.x + 10, zone.y - 6);
+
+                // Грядки и тыквы
+                for (let row = 0; row < 3; row++) {
+                    const gy = zone.y + 25 + row * 28;
+                    ctx.fillStyle = '#92400e';
+                    ctx.fillRect(zone.x + 10, gy, zone.width - 20, 10);
+
+                    // Тыковки на грядке
+                    for (let col = 0; col < 3; col++) {
+                        const px = zone.x + 25 + col * 40;
+                        ctx.fillStyle = '#ea580c';
+                        ctx.beginPath();
+                        ctx.ellipse(px, gy + 5, 8, 7, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#15803d';
+                        ctx.fillRect(px - 1.5, gy - 1, 3, 3);
+                    }
+                }
+
+            } else if (zone.type === 'pond') {
+                // 🦆 Пруд с кувшинками
+                ctx.fillStyle = '#0284c7';
+                ctx.beginPath();
+                ctx.ellipse(zone.x + zone.width / 2, zone.y + zone.height / 2, zone.width / 2, zone.height / 2, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = '#38bdf8';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.fillText('🦆 ПРУД', zone.x + zone.width / 2 - 20, zone.y - 6);
+
+                // Кувшинки
+                ctx.fillStyle = '#16a34a';
+                ctx.beginPath();
+                ctx.arc(zone.x + 40, zone.y + 35, 8, 0, Math.PI * 1.7);
+                ctx.lineTo(zone.x + 40, zone.y + 35);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(zone.x + 95, zone.y + 55, 9, 0.4, Math.PI * 2);
+                ctx.lineTo(zone.x + 95, zone.y + 55);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        }
+    }
+
+    /**
+     * Отрисовка радар-миникарты в углу экрана при расширенной карте
+     */
+    drawMinimap(ctx) {
+        ctx.save();
+
+        const mw = 130;
+        const mh = 90;
+        const mx = this.width - mw - 16;
+        const my = this.height - mh - 20;
+
+        // Фон миникарты
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+        ctx.beginPath();
+        ctx.roundRect(mx, my, mw, mh, 10);
+        ctx.fill();
+
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Заголовок миникарты
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.fillText('🗺️ РАДАР ФЕРМЫ', mx + 8, my + 13);
+
+        const scaleX = (mw - 16) / this.worldWidth;
+        const scaleY = (mh - 22) / this.worldHeight;
+        const offsetX = mx + 8;
+        const offsetY = my + 16;
+
+        // Центральный амбар на миникарте
+        ctx.fillStyle = '#b91c1c';
+        ctx.fillRect(
+            offsetX + this.barn.x * scaleX,
+            offsetY + this.barn.y * scaleY,
+            Math.max(4, this.barn.width * scaleX),
+            Math.max(4, this.barn.height * scaleY)
+        );
+
+        // Свиньи
+        for (const pig of this.pigs) {
+            if (pig.caught || pig.isInBarn) continue;
+
+            if (pig.isBig) {
+                ctx.fillStyle = '#fbbf24'; // золотая большая свинья
+                ctx.beginPath();
+                ctx.arc(offsetX + pig.x * scaleX, offsetY + pig.y * scaleY, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                ctx.fillStyle = '#f472b6'; // обычная свинка
+                ctx.beginPath();
+                ctx.arc(offsetX + pig.x * scaleX, offsetY + pig.y * scaleY, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // Напарники (зелёные точки)
+        ctx.fillStyle = '#22c55e';
+        for (const h of this.helpers) {
+            ctx.beginPath();
+            ctx.arc(offsetX + h.x * scaleX, offsetY + h.y * scaleY, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Игрок (яркая синяя точка)
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(offsetX + this.player.x * scaleX, offsetY + this.player.y * scaleY, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
     }
 
     /**
