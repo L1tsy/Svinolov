@@ -116,10 +116,3 @@ Svinolov/
 ```
 
 Порядок подключения скриптов в `index.html`: config, storage, audio, fx, world, pig, player, helper, shop, ui, game.
-
-## Публикация на GitHub Pages
-
-1. Загрузите файлы игры в корень репозитория, чтобы `index.html` лежал в корне.
-2. В репозитории откройте **Settings → Pages**.
-3. В поле **Build and deployment** выберите **Deploy from a branch**, ветка **main**, папка **/ (root)**, нажмите **Save**.
-4. Через пару минут игра будет доступна по адресу вида `https://<логин>.github.io/<репозиторий>/`.
