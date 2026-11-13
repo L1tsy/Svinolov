@@ -36,10 +36,59 @@
                     <span class="chip-ico">🪙</span>
                     <b id="hud-coins">0</b>
                 </div>
+                <button class="round-btn round-btn-gold" id="btn-leaderboard" type="button" aria-label="Топ игроков" title="Топ игроков">🏆</button>
                 <button class="round-btn" id="btn-shop" type="button" aria-label="Магазин">🛒</button>
                 <button class="round-btn" id="btn-pause" type="button" aria-label="Пауза">⏸</button>
             </div>
         </header>
+
+        <!-- Co-op HUD Bar (отображается в кооперативном режиме) -->
+        <div id="hud-coop-bar" class="hud-coop-bar hidden">
+            <div class="coop-chip p1" id="coop-p1-chip">
+                <span class="coop-avatar p1">🧑‍🌾</span>
+                <div class="coop-col">
+                    <div class="coop-header-line">
+                        <b class="coop-player-tag p1">P1</b>
+                        <span class="coop-player-title">Фермер</span>
+                    </div>
+                    <div class="coop-values">
+                        <span class="coop-val" title="Свиней поймано P1">🐷 <b id="hud-p1-caught">0</b></span>
+                        <span class="coop-val" title="Монеты P1">🪙 <b id="hud-p1-coins">0</b></span>
+                    </div>
+                </div>
+                <div class="coop-dash-indicator ready" id="hud-p1-dash" title="Рывок P1 (LShift)">
+                    <span class="dash-icon">💨</span>
+                </div>
+            </div>
+
+            <div class="coop-combo-badge hidden" id="coop-combo-badge" title="Кооп-комбо!">
+                <span class="coop-combo-icon">⚡</span>
+                <b id="hud-coop-combo-text">КООП x2</b>
+            </div>
+
+            <div class="hud-online-chip hidden" id="hud-online-chip" title="Сетевое подключение">
+                <span class="online-indicator-dot"></span>
+                <span class="online-chip-role" id="hud-online-role">P1 Хост</span>
+                <span class="online-chip-code" id="hud-online-code">PIG-0000</span>
+            </div>
+
+            <div class="coop-chip p2" id="coop-p2-chip">
+                <div class="coop-dash-indicator ready" id="hud-p2-dash" title="Рывок P2 (RShift / Num0)">
+                    <span class="dash-icon">💨</span>
+                </div>
+                <div class="coop-col">
+                    <div class="coop-header-line">
+                        <span class="coop-player-title">Фермерша</span>
+                        <b class="coop-player-tag p2">P2</b>
+                    </div>
+                    <div class="coop-values">
+                        <span class="coop-val" title="Свиней поймано P2">🐷 <b id="hud-p2-caught">0</b></span>
+                        <span class="coop-val" title="Монеты P2">🪙 <b id="hud-p2-coins">0</b></span>
+                    </div>
+                </div>
+                <span class="coop-avatar p2">👩‍🌾</span>
+            </div>
+        </div>
 
         <div id="toasts"></div>
         <div id="banner" aria-live="polite"><div class="banner-title" id="banner-title"></div><div class="banner-sub" id="banner-sub"></div></div>
@@ -61,12 +110,26 @@
                 <div class="title-buttons">
                     <button class="btn btn-big green" id="title-play" type="button">▶ Играть</button>
                     <button class="btn btn-mid yellow" id="title-shop" type="button">🛒 Магазин</button>
+                    <button class="btn btn-mid brown" id="title-leaderboard" type="button">🏆 Топ игроков</button>
+                    <button class="btn btn-mid pink" id="title-online" type="button">🌐 Онлайн Кооп</button>
+                </div>
+                <div class="mode-select-wrap">
+                    <button class="btn btn-mid mode-toggle-btn" id="title-mode" type="button" title="Переключить режим игры">
+                        <span class="mode-icon" id="title-mode-icon">👤</span>
+                        <span id="title-mode-text">Режим: 1 Игрок</span>
+                    </button>
                 </div>
                 <div class="title-stats" id="title-stats"></div>
-                <div class="help-card">
-                    <span><kbd>WASD</kbd> бег</span>
-                    <span><kbd>Пробел</kbd> / клик — сачок</span>
-                    <span><kbd>Shift</kbd> рывок</span>
+                <div class="help-card" id="title-help-card">
+                    <div class="help-solo" id="help-solo">
+                        <span><kbd>WASD</kbd> бег</span>
+                        <span><kbd>Пробел</kbd> / клик — сачок</span>
+                        <span><kbd>Shift</kbd> рывок</span>
+                    </div>
+                    <div class="help-coop hidden" id="help-coop">
+                        <div class="help-coop-row"><b>Игрок 1:</b> <kbd>WASD</kbd> · <kbd>Пробел</kbd> сачок · <kbd>LShift</kbd> рывок</div>
+                        <div class="help-coop-row"><b>Игрок 2:</b> <kbd>Стрелки</kbd> · <kbd>Enter</kbd> сачок · <kbd>RShift / Num0</kbd> рывок</div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -113,13 +176,141 @@
                     <button class="btn toggle" id="pause-sound" type="button"></button>
                     <button class="btn toggle" id="pause-music" type="button"></button>
                 </div>
+                <div class="pause-actions-row">
+                    <button class="btn btn-mid brown" id="pause-leaderboard" type="button">🏆 Топ игроков</button>
+                    <button class="btn btn-mid pink" id="pause-online" type="button">🌐 Онлайн игра</button>
+                    <button class="btn btn-mid cream mode-toggle-btn" id="pause-mode" type="button">👤 Режим: 1 Игрок</button>
+                </div>
                 <div class="help-card help-col">
-                    <span><kbd>WASD</kbd> / стрелки — бег</span>
-                    <span><kbd>Пробел</kbd> или клик — взмах сачком</span>
-                    <span><kbd>Shift</kbd> — рывок</span>
-                    <span>На телефоне: джойстик слева, 🕸️ — сачок, 💨 — рывок</span>
+                    <div class="help-solo" id="pause-help-solo">
+                        <span><kbd>WASD</kbd> / стрелки — бег</span>
+                        <span><kbd>Пробел</kbd> или клик — взмах сачком</span>
+                        <span><kbd>Shift</kbd> — рывок</span>
+                        <span>На телефоне: джойстик слева, 🕸️ — сачок, 💨 — рывок</span>
+                    </div>
+                    <div class="help-coop hidden" id="pause-help-coop">
+                        <div><b>Игрок 1 (Фермер):</b> <kbd>WASD</kbd> бег · <kbd>Пробел</kbd> сачок · <kbd>Shift</kbd> рывок</div>
+                        <div><b>Игрок 2 (Фермерша):</b> <kbd>Стрелки</kbd> бег · <kbd>Enter</kbd> сачок · <kbd>RShift / Num0</kbd> рывок</div>
+                        <div class="coop-hint">💡 Ловите свиней вместе для бонусного комбо!</div>
+                    </div>
                 </div>
                 <button class="btn btn-small brown" id="pause-reset" type="button">🗑 Сбросить прогресс</button>
+            </div>
+        </section>
+
+        <!-- Топ игроков (Лидерборд) -->
+        <section id="leaderboard-modal" class="overlay hidden">
+            <div class="panel leaderboard-panel">
+                <div class="panel-head">
+                    <h2>🏆 Топ игроков</h2>
+                    <div class="lb-header-badges">
+                        <div class="lb-rank-badge-chip" id="lb-rank-badge-chip">
+                            <span class="lb-rank-icon">🏅</span>
+                            <span class="lb-rank-text" id="lb-summary-rank">Место: #--</span>
+                        </div>
+                    </div>
+                    <button class="round-btn close-btn" id="lb-close" type="button" aria-label="Закрыть">✖</button>
+                </div>
+
+                <!-- Интерактивный селектор критериев -->
+                <div class="lb-criteria-container">
+                    <div class="lb-criteria-label">Критерий рейтинга:</div>
+                    <div class="lb-criteria-tabs" id="lb-criteria-tabs" role="tablist">
+                        <!-- Заполняется в ui.js -->
+                    </div>
+                </div>
+
+                <!-- Карточка профиля игрока -->
+                <div class="lb-player-card" id="lb-player-card">
+                    <!-- Заполняется в ui.js -->
+                </div>
+
+                <!-- Таблица лидеров -->
+                <div class="lb-table-container">
+                    <table class="lb-table">
+                        <thead>
+                            <tr>
+                                <th class="col-rank">#</th>
+                                <th class="col-farmer">Фермер</th>
+                                <th class="col-farm">Хозяйство</th>
+                                <th class="col-score" id="lb-score-col-header">Результат</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lb-table-body">
+                            <!-- Заполняется в ui.js -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="lb-footer-note">
+                    <span>💡 Улучшай ферму, делай престижи и ставь рекорды дня, чтобы обогнать соседей!</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Онлайн игра по коду (P2P WebRTC на 2 устройствах) -->
+        <section id="online-modal" class="overlay hidden">
+            <div class="panel online-panel">
+                <div class="panel-head">
+                    <h2>🌐 Игра вдвоём по сети</h2>
+                    <button class="round-btn close-btn" id="online-close" type="button" aria-label="Закрыть">✖</button>
+                </div>
+                
+                <p class="online-desc">
+                    Играйте с двух разных устройств (ПК или телефон) через код подключения!<br>
+                    У каждого игрока свой амбар: <b>Игрок 1 (Фермер)</b> — Красный, <b>Игрок 2 (Фермерша)</b> — Бирюзовый.
+                </p>
+
+                <div class="online-tabs" role="tablist">
+                    <button class="online-tab active" id="tab-host" type="button">🏠 Создать комнату</button>
+                    <button class="online-tab" id="tab-join" type="button">🔗 Войти по коду</button>
+                </div>
+
+                <!-- Вкладка: Создать комнату (Хост) -->
+                <div class="online-tab-content" id="content-host">
+                    <div class="online-card">
+                        <div class="online-role-badge host">Игрок 1 · Фермер (Хост)</div>
+                        <p class="online-step-tip">Создайте комнату и отправьте полученный код или ссылку другу:</p>
+                        
+                        <div class="room-code-box">
+                            <span class="room-code-label">КОД КОМНАТЫ:</span>
+                            <div class="room-code-display" id="host-code-display">------</div>
+                            <div class="room-code-actions">
+                                <button class="btn btn-small yellow" id="btn-copy-code" type="button">📋 Скопировать код</button>
+                                <button class="btn btn-small cream" id="btn-copy-link" type="button">🔗 Скопировать ссылку</button>
+                            </div>
+                        </div>
+
+                        <div class="host-status-box" id="host-status-box">
+                            <div class="spinner-farm" id="host-spinner">🐷</div>
+                            <div class="host-status-text" id="host-status-text">Нажмите «Создать комнату», чтобы сгенерировать код</div>
+                        </div>
+
+                        <button class="btn btn-big green" id="btn-start-host" type="button">🚀 Создать комнату</button>
+                    </div>
+                </div>
+
+                <!-- Вкладка: Подключиться по коду (Гость) -->
+                <div class="online-tab-content hidden" id="content-join">
+                    <div class="online-card">
+                        <div class="online-role-badge guest">Игрок 2 · Фермерша (Гость)</div>
+                        <p class="online-step-tip">Введите код комнаты, который вам прислал друг:</p>
+                        
+                        <div class="join-input-box">
+                            <input type="text" id="join-code-input" class="join-code-input" placeholder="PIG-1234" maxlength="12" autocomplete="off" spellcheck="false">
+                        </div>
+
+                        <div class="join-status-box" id="join-status-box">
+                            <div class="join-status-text" id="join-status-text">Введите код и нажмите «Подключиться»</div>
+                        </div>
+
+                        <button class="btn btn-big green" id="btn-join-room" type="button">🔗 Подключиться ➜</button>
+                    </div>
+                </div>
+
+                <div class="online-footer-info">
+                    <span>💡 Работает напрямую между браузерами (WebRTC P2P). Не требует платных серверов и отлично работает на GitHub Pages!</span>
+                </div>
             </div>
         </section>
     </div>
@@ -132,6 +323,8 @@
     <script src="js/pig.js"></script>
     <script src="js/player.js"></script>
     <script src="js/helper.js"></script>
+    <script src="js/peerjs.min.js"></script>
+    <script src="js/network.js"></script>
     <script src="js/shop.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/game.js"></script>

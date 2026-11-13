@@ -1,28 +1,76 @@
 'use strict';
 
 /**
- * Мир фермы: генерация, препятствия, отрисовка земли и построек
+ * Мир фермы: генерация, препятствия, отрисовка земли, реки, мостов и построек
+ * Поддерживает одиночный режим (solo) и кооперативные карты (coop)
  */
 class World {
-    constructor(tier, seasonIdx) {
+    constructor(tier, seasonIdx, modeOrOpts = 'solo', coopMapIdx = 0) {
+        let mode = 'solo';
+        let mapIdx = 0;
+        if (typeof modeOrOpts === 'string') {
+            mode = modeOrOpts;
+            mapIdx = coopMapIdx || 0;
+        } else if (typeof modeOrOpts === 'object' && modeOrOpts !== null) {
+            mode = modeOrOpts.mode || 'solo';
+            mapIdx = modeOrOpts.coopMapIdx || coopMapIdx || 0;
+        }
+
         this.tier = tier;
         this.seasonIdx = seasonIdx;
         this.season = SEASONS[seasonIdx];
-        [this.w, this.h] = CONFIG.WORLD_SIZES[tier];
+        this.mode = mode;
+        this.coopMapIdx = mapIdx;
+
+        // Размеры карты: для коопа даем больше простора двум игрокам
+        if (this.mode === 'coop') {
+            const base = CONFIG.WORLD_SIZES[tier] || [1500, 1000];
+            this.w = Math.round(base[0] * 1.2);
+            this.h = Math.round(base[1] * 1.15);
+        } else {
+            [this.w, this.h] = CONFIG.WORLD_SIZES[tier];
+        }
+
         this.margin = 36;
         this.rects = [];
         this.circles = [];
         this.props = [];
         this.paths = [];
         this.puddles = [];
+        this.bridges = [];
+        this.interactives = [];
+        this.river = null;
         this.time = 0;
-        this.barnOpen = 0;
-        this.barnBounce = 0;
-        this.build();
+
+        this._barnOpen = 0;
+        this._barnBounce = 0;
+        this._barn2Open = 0;
+        this._barn2Bounce = 0;
+
+        if (this.mode === 'coop') {
+            this.buildCoop(tier, seasonIdx, this.coopMapIdx);
+        } else {
+            this.build();
+        }
         this.renderGround();
     }
 
-    /* ================= Генерация ================= */
+    /** Геттеры/сеттеры для анимации ворот амбаров с поддержкой обоих амбаров */
+    get barnOpen() { return this._barnOpen; }
+    set barnOpen(v) { this._barnOpen = v; this._barn2Open = v; }
+    get barnBounce() { return this._barnBounce; }
+    set barnBounce(v) { this._barnBounce = v; this._barn2Bounce = v; }
+    get barn2Open() { return this._barn2Open; }
+    set barn2Open(v) { this._barn2Open = v; }
+    get barn2Bounce() { return this._barn2Bounce; }
+    set barn2Bounce(v) { this._barn2Bounce = v; }
+
+    /** Статический фабричный метод для создания кооп-карты */
+    static buildCoop(tier, seasonIdx, coopMapIdx = 0) {
+        return new World(tier, seasonIdx, 'coop', coopMapIdx);
+    }
+
+    /* ================= Одиночная генерация (Solo) ================= */
     build() {
         const W = this.w, H = this.h, rnd = U.seeded(4242 + this.tier * 97);
         const addBuilding = (type, bx, by, w, h) => {
@@ -33,7 +81,14 @@ class World {
         };
 
         this.barn = addBuilding('barn', W / 2, H / 2 + 50, 210, 162);
+        this.barn1 = this.barn;
+        this.barn2 = null;
         this.door = { x: W / 2, y: this.barn.y + 10 };
+        this.door1 = this.door;
+        this.door2 = null;
+        this.barns = [this.barn];
+        this.doors = [this.door];
+
         const house = addBuilding('house', W * 0.16, H * 0.25, 150, 124);
         const mill = addBuilding('mill', W * 0.85, H * 0.26, 92, 132);
         const shed = addBuilding('shed', W * 0.15, H * 0.87, 128, 96);
@@ -120,7 +175,7 @@ class World {
 
         this.props.sort((a, b) => a.y - b.y);
 
-        // Мелкие декорации на земле (рисуются один раз)
+        // Мелкие декорации на земле
         this.decor = [];
         const count = Math.floor(area / 4200);
         const fl = this.season.flowers;
@@ -139,10 +194,340 @@ class World {
         this.pumpkins = this.tier >= 2 ? { x: W * 0.64, y: H * 0.18 } : null;
     }
 
+    /* ================= Кооперативная генерация (Co-op) ================= */
+    buildCoop(tier, seasonIdx, coopMapIdx = 0) {
+        const W = this.w, H = this.h;
+        const rnd = U.seeded(8888 + tier * 113 + coopMapIdx * 41);
+
+        const addBuilding = (type, bx, by, w, h, extra = {}) => {
+            const b = { type, x: bx, y: by, w, h, solid: true, ...extra };
+            this.props.push(b);
+            this.rects.push({ x: bx - w / 2 + 5, y: by - h * 0.68, w: w - 10, h: h * 0.68 - 2 });
+            return b;
+        };
+
+        // 1. Двойные амбары (Dual Barns):
+        // Амбар 1 (Западный / Фермер P1 - красный)
+        const b1x = (coopMapIdx === 1) ? W * 0.22 : W * 0.24;
+        const b1y = (coopMapIdx === 1) ? H * 0.38 : H * 0.48;
+        this.barn1 = addBuilding('barn', b1x, b1y, 196, 152, { barnIndex: 1, name: 'Амбар Фермера (P1)' });
+        this.door1 = { x: b1x, y: b1y + 10 };
+
+        // Амбар 2 (Восточный / Фермерша P2 - бирюзовый)
+        const b2x = (coopMapIdx === 1) ? W * 0.78 : W * 0.76;
+        const b2y = (coopMapIdx === 1) ? H * 0.62 : H * 0.48;
+        this.barn2 = addBuilding('barn', b2x, b2y, 196, 152, { barnIndex: 2, name: 'Амбар Напарницы (P2)' });
+        this.door2 = { x: b2x, y: b2y + 10 };
+
+        // Обратная совместимость для полей одиночного режима
+        this.barn = this.barn1;
+        this.door = this.door1;
+        this.barns = [this.barn1, this.barn2];
+        this.doors = [this.door1, this.door2];
+
+        // Хозяйственные постройки по краям
+        const house = addBuilding('house', W * 0.12, H * 0.20, 142, 118);
+        const shed = addBuilding('shed', W * 0.12, H * 0.82, 120, 92);
+        const mill = addBuilding('mill', W * 0.88, H * 0.20, 88, 126);
+        const coop = addBuilding('coop', W * 0.88, H * 0.82, 112, 84);
+
+        // 2. Живописная река, делящая поле (Scenic River)
+        let riverPoints = [];
+        const riverWidth = 96;
+        if (coopMapIdx === 1) {
+            // Диагональная река
+            riverPoints = [
+                { x: W * 0.36, y: 0 },
+                { x: W * 0.44, y: H * 0.30 },
+                { x: W * 0.52, y: H * 0.62 },
+                { x: W * 0.64, y: H }
+            ];
+        } else if (coopMapIdx === 2) {
+            // Извилистая мягкая река
+            riverPoints = [
+                { x: W * 0.50, y: 0 },
+                { x: W * 0.55, y: H * 0.32 },
+                { x: W * 0.45, y: H * 0.68 },
+                { x: W * 0.50, y: H }
+            ];
+        } else {
+            // Макет 0: Речная долина с центральным руслом
+            riverPoints = [
+                { x: W * 0.49, y: 0 },
+                { x: W * 0.53, y: H * 0.28 },
+                { x: W * 0.47, y: H * 0.68 },
+                { x: W * 0.51, y: H }
+            ];
+        }
+        this.river = { points: riverPoints, width: riverWidth };
+
+        // 3. Деревянные пешеходные мостики (Wooden Footbridges)
+        this.bridges = [];
+        if (coopMapIdx === 1) {
+            this.bridges.push({ id: 'north_bridge', x: W * 0.42, y: H * 0.32, w: 132, h: 78, name: 'Северный мост' });
+            this.bridges.push({ id: 'south_bridge', x: W * 0.58, y: H * 0.68, w: 132, h: 78, name: 'Южный мост' });
+        } else {
+            this.bridges.push({ id: 'north_bridge', x: W * 0.52, y: H * 0.22, w: 126, h: 76, name: 'Северный мост' });
+            this.bridges.push({ id: 'center_bridge', x: W * 0.50, y: H * 0.50, w: 140, h: 88, name: 'Центральный мост' });
+            this.bridges.push({ id: 'south_bridge', x: W * 0.48, y: H * 0.78, w: 126, h: 76, name: 'Южный мост' });
+        }
+
+        // Вычисляем сэмплы реки и добавляем физические коллизии воды (кроме мостов)
+        const riverSamples = [];
+        const steps = 44;
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const p = this.evalRiverPoint(t);
+            riverSamples.push(p);
+
+            // Если точка не на мосту — добавляем коллизию воды
+            if (!this.isOnBridge(p.x, p.y, 16)) {
+                this.circles.push({ x: p.x, y: p.y, r: riverWidth * 0.46, sy: 0.92, water: true });
+            }
+        }
+        this.river.samples = riverSamples;
+
+        // 4. Интерактивные элементы карты
+        // Пугало (Scarecrow)
+        const scPos = (coopMapIdx === 1) ? { x: W * 0.32, y: H * 0.70 } : { x: W * 0.20, y: H * 0.30 };
+        const scarecrow = { type: 'scarecrow', x: scPos.x, y: scPos.y, r: 16, wobble: 0, solid: true, name: 'Пугало Кузя' };
+        this.props.push(scarecrow);
+        this.circles.push({ x: scarecrow.x, y: scarecrow.y - 4, r: 14 });
+        this.interactives.push(scarecrow);
+
+        // Колокол фермы (Farm Bell)
+        const bellPos = (coopMapIdx === 1) ? { x: W * 0.50, y: H * 0.48 } : { x: W * 0.58, y: H * 0.50 };
+        const bell = { type: 'bell', x: bellPos.x, y: bellPos.y, r: 18, ringT: 0, solid: true, name: 'Колокол фермы' };
+        this.props.push(bell);
+        this.circles.push({ x: bell.x, y: bell.y - 4, r: 15 });
+        this.interactives.push(bell);
+
+        // Колодец
+        const well = { type: 'well', x: W * 0.35, y: H * 0.20, r: 20 };
+        this.props.push(well);
+        this.circles.push({ x: well.x, y: well.y - 8, r: 20 });
+
+        // 5. Тропинки между амбарами, мостами и домами
+        const d1 = this.door1, d2 = this.door2;
+        const mkPath = (x0, y0, x1, y1, bend = 0, w = 26) => {
+            const mx = (x0 + x1) / 2 + bend, my = (y0 + y1) / 2;
+            return { x0, y0, cx: mx, cy: my, x1, y1, w };
+        };
+
+        this.paths = [
+            // От Амбара 1 к мостам и постройкам
+            mkPath(d1.x, d1.y, this.bridges[0].x, this.bridges[0].y, -20),
+            mkPath(d1.x, d1.y, this.bridges[Math.floor(this.bridges.length / 2)].x, this.bridges[Math.floor(this.bridges.length / 2)].y, 0, 32),
+            mkPath(d1.x, d1.y, this.bridges[this.bridges.length - 1].x, this.bridges[this.bridges.length - 1].y, -20),
+            mkPath(d1.x, d1.y, house.x, house.y + 12, -40),
+            mkPath(d1.x, d1.y, shed.x + 20, shed.y + 6, -30),
+
+            // От Амбара 2 к мостам и постройкам
+            mkPath(d2.x, d2.y, this.bridges[0].x, this.bridges[0].y, 20),
+            mkPath(d2.x, d2.y, this.bridges[Math.floor(this.bridges.length / 2)].x, this.bridges[Math.floor(this.bridges.length / 2)].y, 0, 32),
+            mkPath(d2.x, d2.y, this.bridges[this.bridges.length - 1].x, this.bridges[this.bridges.length - 1].y, 20),
+            mkPath(d2.x, d2.y, mill.x, mill.y + 12, 40),
+            mkPath(d2.x, d2.y, coop.x - 20, coop.y + 6, 30)
+        ];
+
+        // 6. Коридоры препятствий для загона свиней (Apple Orchard & Hay Funnels)
+        // Яблоневый сад слева (вертикальные аллеи для загона)
+        const ox = W * 0.32, oy = H * 0.30;
+        for (let row = 0; row < 3; row++) {
+            for (let col = 0; col < 2; col++) {
+                const tx = ox + col * 72, ty = oy + row * 84;
+                this.props.push({ type: 'tree', x: tx, y: ty, r: 26, seed: row * 4 + col, v: 1, apple: true });
+                this.circles.push({ x: tx, y: ty - 4, r: 13 });
+            }
+        }
+
+        // Коридоры из стогов сена для флангового перехвата (Hay Bales)
+        const haySpots = [
+            // Ворота перед мостами
+            { x: this.bridges[0].x - 110, y: this.bridges[0].y - 25 },
+            { x: this.bridges[0].x + 110, y: this.bridges[0].y + 25 },
+            { x: this.bridges[this.bridges.length - 1].x - 110, y: this.bridges[this.bridges.length - 1].y + 25 },
+            { x: this.bridges[this.bridges.length - 1].x + 110, y: this.bridges[this.bridges.length - 1].y - 25 },
+            // Коридоры у Амбара 1
+            { x: b1x - 90, y: b1y + 60 },
+            { x: b1x + 90, y: b1y + 60 },
+            // Коридоры у Амбара 2
+            { x: b2x - 90, y: b2y + 60 },
+            { x: b2x + 90, y: b2y + 60 },
+            // Полевые ловушки
+            { x: W * 0.65, y: H * 0.32 },
+            { x: W * 0.68, y: H * 0.72 }
+        ];
+        for (const h of haySpots) {
+            this.props.push({ type: 'hay', x: h.x, y: h.y, r: 24 });
+            this.circles.push({ x: h.x, y: h.y - 4, r: 22 });
+        }
+
+        // Декоративные деревья, кусты, камни
+        const scatterProps = (type, count, r, colR) => {
+            let placedCount = 0, tries = 0;
+            while (placedCount < count && tries++ < count * 35) {
+                const x = this.margin + 40 + rnd() * (W - this.margin * 2 - 80);
+                const y = this.margin + 50 + rnd() * (H - this.margin * 2 - 80);
+                // Проверяем расстояние от дверей, реки и мостов
+                if (Math.hypot(x - d1.x, y - d1.y) < 160 || Math.hypot(x - d2.x, y - d2.y) < 160) continue;
+                if (this.isOnBridge(x, y, 30)) continue;
+                let nearWater = false;
+                for (const s of this.river.samples) {
+                    if (Math.hypot(x - s.x, y - s.y) < riverWidth * 0.6) { nearWater = true; break; }
+                }
+                if (nearWater) continue;
+
+                this.props.push({ type, x, y, r, seed: rnd() * 100, v: Math.floor(rnd() * 3) });
+                if (colR) this.circles.push({ x, y: y - 4, r: colR });
+                placedCount++;
+            }
+        };
+
+        scatterProps('bush', 12 + this.tier * 4, 17, 12);
+        scatterProps('rock', 8 + this.tier * 3, 12, 11);
+        scatterProps('tree', 10 + this.tier * 2, 26, 13);
+
+        this.props.sort((a, b) => a.y - b.y);
+
+        // Земляные декорации
+        this.decor = [];
+        const area = W * H;
+        const count = Math.floor(area / 4200);
+        const fl = this.season.flowers;
+        for (let i = 0; i < count; i++) {
+            const x = this.margin + rnd() * (W - this.margin * 2), y = this.margin + rnd() * (H - this.margin * 2);
+            const r = rnd();
+            let type = 'tuft';
+            if (fl.length && r < 0.3 * this.season.flowerRate) type = 'flower';
+            else if (r > 0.93) type = 'pebble';
+            this.decor.push({ x, y, type, size: 3 + rnd() * 4, c: Math.floor(rnd() * 8), a: rnd() * 6.28 });
+        }
+        this.blotches = [];
+        for (let i = 0; i < Math.floor(area / 14000); i++) {
+            this.blotches.push({ x: rnd() * W, y: rnd() * H, rx: 40 + rnd() * 110, ry: 26 + rnd() * 60, a: rnd() * 3.14, light: rnd() < 0.5 });
+        }
+        this.pumpkins = { x: W * 0.70, y: H * 0.20 };
+    }
+
+    /** Вычисление точки кубической кривой Безье для русла реки */
+    evalRiverPoint(t) {
+        if (!this.river || !this.river.points) return { x: this.w * 0.5, y: t * this.h };
+        const pts = this.river.points;
+        if (pts.length === 4) {
+            const mt = 1 - t;
+            const mt2 = mt * mt, t2 = t * t;
+            const a = mt2 * mt, b = 3 * mt2 * t, c = 3 * mt * t2, d = t2 * t;
+            return {
+                x: a * pts[0].x + b * pts[1].x + c * pts[2].x + d * pts[3].x,
+                y: a * pts[0].y + b * pts[1].y + c * pts[2].y + d * pts[3].y
+            };
+        }
+        return { x: this.w * 0.5, y: t * this.h };
+    }
+
+    /** Проверка, находится ли сущность на одном из деревянных мостиков */
+    isOnBridge(x, y, pad = 8) {
+        if (!this.bridges || !this.bridges.length) return false;
+        for (const b of this.bridges) {
+            const hw = b.w / 2 + pad, hh = b.h / 2 + pad;
+            if (x >= b.x - hw && x <= b.x + hw && y >= b.y - hh && y <= b.y + hh) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Возвращает ближайшую дверь амбара для заданной точки */
+    getClosestDoor(x, y) {
+        if (!this.doors || !this.doors.length) return this.door;
+        let best = this.doors[0], minD = Math.hypot(x - best.x, y - best.y);
+        for (let i = 1; i < this.doors.length; i++) {
+            const d = Math.hypot(x - this.doors[i].x, y - this.doors[i].y);
+            if (d < minD) { minD = d; best = this.doors[i]; }
+        }
+        return best;
+    }
+
+    /** Возвращает дверь конкретного игрока (P1 -> door1, P2 -> door2) */
+    getDoorForPlayer(p) {
+        const id = (typeof p === 'number') ? p : (p && p.id ? p.id : 1);
+        if (id === 2 && this.door2) return this.door2;
+        return this.door1 || this.door;
+    }
+
+    /** Возвращает амбар конкретного игрока (P1 -> barn1, P2 -> barn2) */
+    getBarnForPlayer(p) {
+        const id = (typeof p === 'number') ? p : (p && p.id ? p.id : 1);
+        if (id === 2 && this.barn2) return this.barn2;
+        return this.barn1 || this.barn;
+    }
+
+    /** Активация открытия ворот амбара */
+    openBarn(barnIndex = 1) {
+        if (barnIndex === 2) {
+            this.barn2Open = 1.2;
+            this.barn2Bounce = 1.0;
+        } else {
+            this.barnOpen = 1.2;
+            this.barnBounce = 1.0;
+        }
+    }
+
+    /** Взаимодействие с интерактивными объектами карты (пугало, колокол) */
+    triggerInteractive(x, y, rad = 36, game = null) {
+        let triggered = null;
+        for (const it of this.interactives) {
+            const dist = Math.hypot(x - it.x, y - it.y);
+            if (dist <= rad + it.r) {
+                if (it.type === 'scarecrow') {
+                    it.wobble = 1.0;
+                    triggered = 'scarecrow';
+                    if (game && game.fx) game.fx.dust(it.x, it.y - 12, 6, '#fef08a');
+                    if (game && game.sfx && game.sfx.combo) game.sfx.combo(1);
+                    // Пугало отпугивает ближайших свиней в коридоре
+                    if (game && game.pigs) {
+                        for (const pig of game.pigs) {
+                            const pd = Math.hypot(pig.x - it.x, pig.y - it.y);
+                            if (pd < 170 && !pig.caught && !pig.inBarn) {
+                                pig.scared = 2.0;
+                                const ang = Math.atan2(pig.y - it.y, pig.x - it.x);
+                                pig.vx = Math.cos(ang) * 190;
+                                pig.vy = Math.sin(ang) * 190;
+                            }
+                        }
+                    }
+                } else if (it.type === 'bell') {
+                    it.ringT = 1.0;
+                    triggered = 'bell';
+                    if (game && game.sfx && game.sfx.combo) game.sfx.combo(3);
+                    if (game && game.fx) {
+                        game.fx.sparkle(it.x, it.y - 36, '#ffd23f');
+                        game.fx.floatText(it.x, it.y - 50, '🔔 ДИНЬ-ДОН!', '#ffd23f');
+                    }
+                    // Звон привлекает внимание свиней или путает их направление
+                    if (game && game.pigs) {
+                        for (const pig of game.pigs) {
+                            const pd = Math.hypot(pig.x - it.x, pig.y - it.y);
+                            if (pd < 220 && !pig.caught && !pig.inBarn) {
+                                pig.alarmT = 2.5;
+                                if (pig.vx) pig.vx = -pig.vx;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return triggered;
+    }
+
     /* ================= Коллизии ================= */
     resolve(e, rad, clampBounds = true) {
         let hit = false;
+        const onBridge = this.isOnBridge(e.x, e.y);
+
         for (const r of this.rects) {
+            if (r.water && onBridge) continue;
             const nx = U.clamp(e.x, r.x, r.x + r.w), ny = U.clamp(e.y, r.y, r.y + r.h);
             const dx = e.x - nx, dy = e.y - ny, d2 = dx * dx + dy * dy;
             if (d2 >= rad * rad) continue;
@@ -157,6 +542,7 @@ class World {
             }
         }
         for (const c of this.circles) {
+            if (c.water && onBridge) continue;
             const sy = c.sy || 1;
             const dx = e.x - c.x, dy = (e.y - c.y) / sy, dd = Math.hypot(dx, dy), min = c.r + rad;
             if (dd >= min) continue;
@@ -172,15 +558,19 @@ class World {
         return hit;
     }
 
-    /** Вектор отталкивания от ближайших препятствий (для ИИ) */
+    /** Вектор отталкивания от препятствий (для ИИ свиней и напарников) */
     avoid(x, y, range) {
         let ax = 0, ay = 0;
+        const onBridge = this.isOnBridge(x, y);
+
         for (const r of this.rects) {
+            if (r.water && onBridge) continue;
             const nx = U.clamp(x, r.x, r.x + r.w), ny = U.clamp(y, r.y, r.y + r.h);
             const dx = x - nx, dy = y - ny, dd = Math.hypot(dx, dy);
             if (dd < range && dd > 0.01) { const k = (1 - dd / range); ax += (dx / dd) * k; ay += (dy / dd) * k; }
         }
         for (const c of this.circles) {
+            if (c.water && onBridge) continue;
             const dx = x - c.x, dy = (y - c.y) / (c.sy || 1), dd = Math.hypot(dx, dy) - c.r;
             if (dd < range) { const l = Math.hypot(dx, dy) || 1, k = (1 - Math.max(0, dd) / range); ax += (dx / l) * k; ay += (dy / l) * k; }
         }
@@ -189,23 +579,32 @@ class World {
 
     isFree(x, y, rad) {
         if (x < this.margin + rad || x > this.w - this.margin - rad || y < this.margin + rad + 8 || y > this.h - this.margin - rad) return false;
+        const onBridge = this.isOnBridge(x, y);
+
         for (const r of this.rects) {
+            if (r.water && onBridge) continue;
             const nx = U.clamp(x, r.x, r.x + r.w), ny = U.clamp(y, r.y, r.y + r.h);
             if (Math.hypot(x - nx, y - ny) < rad) return false;
         }
-        for (const c of this.circles) if (Math.hypot(x - c.x, (y - c.y) / (c.sy || 1)) < c.r + rad) return false;
+        for (const c of this.circles) {
+            if (c.water && onBridge) continue;
+            if (Math.hypot(x - c.x, (y - c.y) / (c.sy || 1)) < c.r + rad) return false;
+        }
         return true;
     }
 
     freeSpot(rad = 30, near = null, minD = 0, maxD = 1e9) {
-        for (let i = 0; i < 80; i++) {
+        for (let i = 0; i < 90; i++) {
             const x = U.rand(this.margin + rad, this.w - this.margin - rad);
             const y = U.rand(this.margin + rad + 10, this.h - this.margin - rad);
             if (!this.isFree(x, y, rad)) continue;
-            if (near) { const dd = Math.hypot(x - near.x, y - near.y); if (dd < minD || dd > maxD) continue; }
+            if (near) {
+                const dd = Math.hypot(x - near.x, y - near.y);
+                if (dd < minD || dd > maxD) continue;
+            }
             return { x, y };
         }
-        return { x: this.door.x + U.rand(-200, 200), y: this.door.y + U.rand(90, 220) };
+        return { x: this.door.x + U.rand(-180, 180), y: this.door.y + U.rand(90, 200) };
     }
 
     addPuddle(x, y, r = 34, life = 11) {
@@ -222,8 +621,17 @@ class World {
 
     update(dt) {
         this.time += dt;
-        if (this.barnOpen > 0) this.barnOpen = Math.max(0, this.barnOpen - dt);
-        if (this.barnBounce > 0) this.barnBounce = Math.max(0, this.barnBounce - dt * 4);
+        if (this._barnOpen > 0) this._barnOpen = Math.max(0, this._barnOpen - dt);
+        if (this._barnBounce > 0) this._barnBounce = Math.max(0, this._barnBounce - dt * 4);
+        if (this._barn2Open > 0) this._barn2Open = Math.max(0, this._barn2Open - dt);
+        if (this._barn2Bounce > 0) this._barn2Bounce = Math.max(0, this._barn2Bounce - dt * 4);
+
+        // Обновление интерактивных элементов
+        for (const it of this.interactives) {
+            if (it.wobble > 0) it.wobble = Math.max(0, it.wobble - dt * 2.8);
+            if (it.ringT > 0) it.ringT = Math.max(0, it.ringT - dt * 2.4);
+        }
+
         for (let i = this.puddles.length - 1; i >= 0; i--) {
             const p = this.puddles[i];
             p.life -= dt;
@@ -231,7 +639,7 @@ class World {
         }
     }
 
-    /* ================= Земля (рисуется один раз в буфер) ================= */
+    /* ================= Земля (рисуется в буфер) ================= */
     renderGround() {
         const W = this.w, H = this.h, s = this.season;
         const cv = document.createElement('canvas');
@@ -239,6 +647,7 @@ class World {
         const ctx = cv.getContext('2d');
         const rnd = U.seeded(99 + this.tier * 31);
 
+        // Трава
         ctx.fillStyle = s.grass;
         ctx.fillRect(0, 0, W, H);
 
@@ -250,6 +659,46 @@ class World {
             ctx.fill();
         }
         ctx.globalAlpha = 1;
+
+        // Если кооп: река со сглаженными берегами
+        if (this.mode === 'coop' && this.river && this.river.samples) {
+            const smp = this.river.samples;
+            const rw = this.river.width;
+            const isWinter = s.id === 'winter';
+
+            // Берега реки (песок / галька / снег)
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = isWinter ? '#b9c7d1' : '#c9b17c';
+            ctx.lineWidth = rw + 24;
+            ctx.beginPath();
+            ctx.moveTo(smp[0].x, smp[0].y);
+            for (let i = 1; i < smp.length; i++) ctx.lineTo(smp[i].x, smp[i].y);
+            ctx.stroke();
+
+            // Водное зеркало реки
+            ctx.strokeStyle = isWinter ? '#bae6fd' : '#38bdf8';
+            ctx.lineWidth = rw;
+            ctx.beginPath();
+            ctx.moveTo(smp[0].x, smp[0].y);
+            for (let i = 1; i < smp.length; i++) ctx.lineTo(smp[i].x, smp[i].y);
+            ctx.stroke();
+
+            // Внутреннее русло реки с градиентом глубины
+            ctx.strokeStyle = isWinter ? '#93c5fd' : '#0284c7';
+            ctx.lineWidth = rw * 0.72;
+            ctx.stroke();
+
+            // Водная рябь у берегов
+            ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+            ctx.lineWidth = 2.5;
+            for (let i = 2; i < smp.length - 2; i += 3) {
+                const sp = smp[i];
+                ctx.beginPath();
+                ctx.ellipse(sp.x - rw * 0.28, sp.y, 14, 5, 0.2, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
 
         // Тропинки
         ctx.lineCap = 'round';
@@ -263,31 +712,43 @@ class World {
                 ctx.stroke();
             }
         }
-        // Утоптанная площадка у ворот амбара
-        ctx.fillStyle = s.pathEdge;
-        ctx.beginPath(); ctx.ellipse(this.door.x, this.door.y + 14, 92, 40, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = s.path;
-        ctx.beginPath(); ctx.ellipse(this.door.x, this.door.y + 14, 86, 35, 0, 0, Math.PI * 2); ctx.fill();
 
-        // Пруд
-        const p = this.pond;
-        ctx.fillStyle = s.id === 'winter' ? '#b9c7d1' : '#c9b17c';
-        ctx.beginPath(); ctx.ellipse(p.x, p.y, p.rx + 12, p.ry + 10, 0, 0, Math.PI * 2); ctx.fill();
-        const wg = ctx.createRadialGradient(p.x - p.rx * 0.2, p.y - p.ry * 0.3, 10, p.x, p.y, p.rx);
-        if (s.id === 'winter') { wg.addColorStop(0, '#eaf6ff'); wg.addColorStop(1, '#a9d4ee'); }
-        else { wg.addColorStop(0, '#6fd3f7'); wg.addColorStop(1, '#2a9fd6'); }
-        ctx.fillStyle = wg;
-        ctx.beginPath(); ctx.ellipse(p.x, p.y, p.rx, p.ry, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.ellipse(p.x, p.y, p.rx - 5, p.ry - 5, 0, Math.PI * 1.05, Math.PI * 1.6); ctx.stroke();
-        if (s.id !== 'winter') {
-            ctx.fillStyle = '#3fae5a';
-            for (const [ox, oy, r] of [[-0.4, 0.2, 10], [0.35, -0.25, 12], [0.1, 0.45, 8]]) {
-                ctx.beginPath(); ctx.moveTo(p.x + ox * p.rx, p.y + oy * p.ry);
-                ctx.arc(p.x + ox * p.rx, p.y + oy * p.ry, r, 0.5, Math.PI * 2); ctx.fill();
+        // Площадки перед воротами амбаров
+        for (const d of this.doors) {
+            ctx.fillStyle = s.pathEdge;
+            ctx.beginPath(); ctx.ellipse(d.x, d.y + 14, 88, 38, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = s.path;
+            ctx.beginPath(); ctx.ellipse(d.x, d.y + 14, 82, 33, 0, 0, Math.PI * 2); ctx.fill();
+        }
+
+        // Деревянные мостики в режиме коопа
+        if (this.mode === 'coop') {
+            for (const b of this.bridges) {
+                this.drawBridgeDeck(ctx, b, s);
             }
-            ctx.fillStyle = '#ff9ecd';
-            ctx.beginPath(); ctx.arc(p.x + 0.35 * p.rx, p.y - 0.25 * p.ry, 4, 0, Math.PI * 2); ctx.fill();
+        }
+
+        // Одиночный пруд (если соло)
+        if (this.pond) {
+            const p = this.pond;
+            ctx.fillStyle = s.id === 'winter' ? '#b9c7d1' : '#c9b17c';
+            ctx.beginPath(); ctx.ellipse(p.x, p.y, p.rx + 12, p.ry + 10, 0, 0, Math.PI * 2); ctx.fill();
+            const wg = ctx.createRadialGradient(p.x - p.rx * 0.2, p.y - p.ry * 0.3, 10, p.x, p.y, p.rx);
+            if (s.id === 'winter') { wg.addColorStop(0, '#eaf6ff'); wg.addColorStop(1, '#a9d4ee'); }
+            else { wg.addColorStop(0, '#6fd3f7'); wg.addColorStop(1, '#2a9fd6'); }
+            ctx.fillStyle = wg;
+            ctx.beginPath(); ctx.ellipse(p.x, p.y, p.rx, p.ry, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.ellipse(p.x, p.y, p.rx - 5, p.ry - 5, 0, Math.PI * 1.05, Math.PI * 1.6); ctx.stroke();
+            if (s.id !== 'winter') {
+                ctx.fillStyle = '#3fae5a';
+                for (const [ox, oy, r] of [[-0.4, 0.2, 10], [0.35, -0.25, 12], [0.1, 0.45, 8]]) {
+                    ctx.beginPath(); ctx.moveTo(p.x + ox * p.rx, p.y + oy * p.ry);
+                    ctx.arc(p.x + ox * p.rx, p.y + oy * p.ry, r, 0.5, Math.PI * 2); ctx.fill();
+                }
+                ctx.fillStyle = '#ff9ecd';
+                ctx.beginPath(); ctx.arc(p.x + 0.35 * p.rx, p.y - 0.25 * p.ry, 4, 0, Math.PI * 2); ctx.fill();
+            }
         }
 
         // Тыквенная грядка
@@ -332,7 +793,7 @@ class World {
             }
         }
 
-        // Живая изгородь и забор по периметру
+        // Забор по периметру карты
         const m = this.margin;
         ctx.fillStyle = s.id === 'winter' ? '#9fb8c6' : '#2f6b33';
         ctx.fillRect(0, 0, W, m - 8); ctx.fillRect(0, H - m + 10, W, m); ctx.fillRect(0, 0, m - 10, H); ctx.fillRect(W - m + 10, 0, m, H);
@@ -360,14 +821,95 @@ class World {
         this.ground = cv;
     }
 
+    /** Отрисовка деревянного настила мостика */
+    drawBridgeDeck(ctx, b, season) {
+        const OUT = '#4a2810';
+        const hw = b.w / 2, hh = b.h / 2;
+
+        // Каменные устои моста на берегах
+        ctx.fillStyle = '#64748b';
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.roundRect(b.x - hw - 8, b.y - hh - 2, 14, b.h + 4, 3);
+        ctx.roundRect(b.x + hw - 6, b.y - hh - 2, 14, b.h + 4, 3);
+        ctx.fill(); ctx.stroke();
+
+        // Деревянный настил
+        ctx.fillStyle = '#92400e';
+        ctx.strokeStyle = OUT;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.roundRect(b.x - hw, b.y - hh, b.w, b.h, 4);
+        ctx.fill(); ctx.stroke();
+
+        // Доски настила
+        ctx.strokeStyle = '#78350f';
+        ctx.lineWidth = 2;
+        const step = 14;
+        for (let px = b.x - hw + step; px < b.x + hw; px += step) {
+            ctx.beginPath();
+            ctx.moveTo(px, b.y - hh + 2);
+            ctx.lineTo(px, b.y + hh - 2);
+            ctx.stroke();
+
+            // Гвоздики на досках
+            ctx.fillStyle = '#1e293b';
+            ctx.beginPath();
+            ctx.arc(px - step / 2, b.y - hh + 6, 1.2, 0, Math.PI * 2);
+            ctx.arc(px - step / 2, b.y + hh - 6, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Боковые перила
+        ctx.strokeStyle = OUT;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(b.x - hw - 4, b.y - hh + 3); ctx.lineTo(b.x + hw + 4, b.y - hh + 3);
+        ctx.moveTo(b.x - hw - 4, b.y + hh - 3); ctx.lineTo(b.x + hw + 4, b.y + hh - 3);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#d97706';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(b.x - hw - 4, b.y - hh + 3); ctx.lineTo(b.x + hw + 4, b.y - hh + 3);
+        ctx.moveTo(b.x - hw - 4, b.y + hh - 3); ctx.lineTo(b.x + hw + 4, b.y + hh - 3);
+        ctx.stroke();
+
+        // Столбики перил с теплыми фонариками по углам
+        for (const [px, py] of [[b.x - hw + 4, b.y - hh + 3], [b.x + hw - 4, b.y - hh + 3], [b.x - hw + 4, b.y + hh - 3], [b.x + hw - 4, b.y + hh - 3]]) {
+            ctx.fillStyle = '#451a03';
+            ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'rgba(255, 235, 120, 0.4)';
+            ctx.beginPath(); ctx.arc(px, py, 9, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#ffd23f';
+            ctx.beginPath(); ctx.arc(px, py, 2.5, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+
     drawGround(ctx, vx, vy, vw, vh) {
         const sx = Math.max(0, Math.floor(vx)), sy = Math.max(0, Math.floor(vy));
         const sw = Math.min(this.w - sx, Math.ceil(vw) + 2), sh = Math.min(this.h - sy, Math.ceil(vh) + 2);
         if (sw > 0 && sh > 0) ctx.drawImage(this.ground, sx, sy, sw, sh, sx, sy, sw, sh);
 
-        // Блики на воде
-        const p = this.pond, t = this.time;
-        if (this.season.id !== 'winter') {
+        // Блики и анимация воды
+        const t = this.time;
+        if (this.mode === 'coop' && this.river && this.river.samples) {
+            // Течение реки и легкие волны
+            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+            ctx.lineWidth = 2;
+            const smp = this.river.samples;
+            for (let i = 3; i < smp.length - 3; i += 4) {
+                const sp = smp[i];
+                const ph = (t * 0.4 + i * 0.15) % 1;
+                ctx.globalAlpha = Math.sin(ph * Math.PI) * 0.55;
+                ctx.beginPath();
+                ctx.ellipse(sp.x + Math.sin(ph * 4) * 8, sp.y + ph * 12, 10 + ph * 10, 3.5, 0, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+        } else if (this.pond && this.season.id !== 'winter') {
+            const p = this.pond;
             ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2;
             for (let i = 0; i < 3; i++) {
                 const ph = (t * 0.35 + i / 3) % 1;
@@ -396,7 +938,6 @@ class World {
     /* ================= Постройки и объекты ================= */
     drawProp(ctx, p, focus, info) {
         const t = this.time;
-        // Постройка становится полупрозрачной, если фермер зашёл за неё
         let alpha = 1;
         if (focus) {
             const hw = p.w ? p.w / 2 : 34, hh = p.h || 90;
@@ -411,6 +952,8 @@ class World {
             case 'shed': this.drawShed(ctx, p); break;
             case 'coop': this.drawCoop(ctx, p); break;
             case 'well': this.drawWell(ctx, p); break;
+            case 'scarecrow': this.drawScarecrow(ctx, p, t); break;
+            case 'bell': this.drawBell(ctx, p, t); break;
             case 'tree': this.drawTree(ctx, p, t); break;
             case 'hay': this.drawHay(ctx, p); break;
             case 'bush': this.drawBush(ctx, p, t); break;
@@ -428,51 +971,66 @@ class World {
         const w = b.w, h = b.h, OUT = '#4a2513';
         this.shadow(ctx, b.x, b.y, w * 0.6, 18);
         ctx.translate(b.x, b.y);
-        const bn = this.barnBounce;
+
+        const isBarn2 = b.barnIndex === 2 || b === this.barn2;
+        const bn = isBarn2 ? this._barn2Bounce : this._barnBounce;
         ctx.scale(1 + bn * 0.05, 1 - bn * 0.06);
         const x = -w / 2, y = -h;
 
+        // Цветовая схема: Красный (P1) vs Бирюзово-синий (P2)
+        const facadeColor = isBarn2 ? '#0284c7' : '#d23f36';
+        const plankColor = isBarn2 ? 'rgba(10,50,90,0.45)' : 'rgba(120,20,20,0.45)';
+        const roofTrim = isBarn2 ? '#0369a1' : '#7b4a2b';
+        const leafColor = isBarn2 ? '#0891b2' : '#b3342c';
+
         // Фасад
-        ctx.fillStyle = '#d23f36';
+        ctx.fillStyle = facadeColor;
         ctx.strokeStyle = OUT; ctx.lineWidth = 3; ctx.lineJoin = 'round';
         ctx.beginPath();
         ctx.moveTo(x, 0); ctx.lineTo(x, y + 62); ctx.lineTo(x + 26, y + 28); ctx.lineTo(0, y + 6);
         ctx.lineTo(-x - 26, y + 28); ctx.lineTo(-x, y + 62); ctx.lineTo(-x, 0); ctx.closePath();
         ctx.fill(); ctx.stroke();
+
         // Доски
-        ctx.strokeStyle = 'rgba(120,20,20,0.45)'; ctx.lineWidth = 1.5;
-        for (let px = x + 15; px < -x; px += 15) { ctx.beginPath(); ctx.moveTo(px, y + 62); ctx.lineTo(px, -1); ctx.stroke(); }
+        ctx.strokeStyle = plankColor; ctx.lineWidth = 1.5;
+        for (let px = x + 15; px < -x; px += 15) {
+            ctx.beginPath(); ctx.moveTo(px, y + 62); ctx.lineTo(px, -1); ctx.stroke();
+        }
+
         // Крыша
         ctx.strokeStyle = OUT; ctx.lineWidth = 17; ctx.lineCap = 'round';
         ctx.beginPath(); ctx.moveTo(x - 10, y + 66); ctx.lineTo(x + 22, y + 26); ctx.lineTo(0, y + 2); ctx.lineTo(-x - 22, y + 26); ctx.lineTo(-x + 10, y + 66); ctx.stroke();
-        ctx.strokeStyle = '#7b4a2b'; ctx.lineWidth = 11;
+        ctx.strokeStyle = roofTrim; ctx.lineWidth = 11;
         ctx.beginPath(); ctx.moveTo(x - 10, y + 66); ctx.lineTo(x + 22, y + 26); ctx.lineTo(0, y + 2); ctx.lineTo(-x - 22, y + 26); ctx.lineTo(-x + 10, y + 66); ctx.stroke();
         if (this.season.id === 'winter') {
             ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 6;
             ctx.beginPath(); ctx.moveTo(x + 22, y + 22); ctx.lineTo(0, y - 1); ctx.lineTo(-x - 22, y + 22); ctx.stroke();
         }
 
-        // Чердачное окно со свинкой
+        // Чердачное окно (для P1 — свинка, для P2 — золотая свинка / птичка)
         ctx.fillStyle = '#2b1a3a'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
         ctx.beginPath(); ctx.arc(0, y + 44, 15, Math.PI, 0); ctx.lineTo(15, y + 56); ctx.lineTo(-15, y + 56); ctx.closePath(); ctx.fill(); ctx.stroke();
         const peek = Math.sin(this.time * 1.3) * 2;
-        ctx.fillStyle = '#fbb6d4'; ctx.beginPath(); ctx.arc(0, y + 51 + peek, 8.5, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#f4729f'; ctx.beginPath(); ctx.ellipse(0, y + 53 + peek, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = isBarn2 ? '#fed7aa' : '#fbb6d4';
+        ctx.beginPath(); ctx.arc(0, y + 51 + peek, 8.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = isBarn2 ? '#f97316' : '#f4729f';
+        ctx.beginPath(); ctx.ellipse(0, y + 53 + peek, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#1f1320';
         const blink = (this.time % 3.4) < 0.12 ? 0.3 : 1.3;
         ctx.beginPath(); ctx.ellipse(-3.5, y + 48.5 + peek, 1.2, blink, 0, 0, Math.PI * 2); ctx.ellipse(3.5, y + 48.5 + peek, 1.2, blink, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#d23f36'; ctx.fillRect(-16, y + 56, 32, 5);
+        ctx.fillStyle = facadeColor; ctx.fillRect(-16, y + 56, 32, 5);
 
         // Ворота
         const dw = 64, dh = 66;
         ctx.fillStyle = '#1d0f0a';
         ctx.fillRect(-dw / 2, -dh, dw, dh);
-        const open = Math.min(1, this.barnOpen * 3);
+        const openTime = isBarn2 ? this._barn2Open : this._barnOpen;
+        const open = Math.min(1, openTime * 3);
         const leaf = (dir) => {
             ctx.save();
             ctx.translate(dir * dw / 2, 0);
             ctx.scale(dir * (1 - open * 0.82), 1);
-            ctx.fillStyle = '#b3342c'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
+            ctx.fillStyle = leafColor; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
             ctx.beginPath(); ctx.rect(-dw / 2, -dh, dw / 2, dh); ctx.fill(); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(-dw / 2, -dh); ctx.lineTo(0, 0); ctx.moveTo(0, -dh); ctx.lineTo(-dw / 2, 0); ctx.stroke();
             ctx.restore();
@@ -480,12 +1038,108 @@ class World {
         leaf(1); leaf(-1);
         ctx.strokeStyle = OUT; ctx.lineWidth = 3; ctx.strokeRect(-dw / 2, -dh, dw, dh);
 
-        // Табличка-счётчик
-        if (info) {
+        // Табличка-счётчик или название амбара
+        const tagText = info || (this.mode === 'coop' ? (isBarn2 ? '🏠 P2 АМБАР' : '🏠 P1 АМБАР') : null);
+        if (tagText) {
             ctx.fillStyle = '#fff3d6'; ctx.strokeStyle = OUT; ctx.lineWidth = 2.5;
-            ctx.beginPath(); ctx.roundRect(-44, -dh - 26, 88, 21, 6); ctx.fill(); ctx.stroke();
-            ctx.fillStyle = '#5b3a1e'; ctx.font = '900 13px "Nunito","Segoe UI",sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(info, 0, -dh - 15);
+            ctx.beginPath(); ctx.roundRect(-46, -dh - 26, 92, 21, 6); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#5b3a1e'; ctx.font = '900 12px "Nunito","Segoe UI",sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(tagText, 0, -dh - 15);
+        }
+    }
+
+    drawScarecrow(ctx, p, t) {
+        const OUT = '#3f2a17';
+        this.shadow(ctx, p.x, p.y + 2, 24, 7);
+        ctx.translate(p.x, p.y);
+
+        // Покачивание от ветра или толчка
+        const wob = Math.sin(t * 18) * (p.wobble || 0) * 0.22 + Math.sin(t * 2.2) * 0.04;
+        ctx.rotate(wob);
+
+        // Деревянный шест
+        ctx.strokeStyle = '#6b4423'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(0, 4); ctx.lineTo(0, -56); ctx.stroke();
+
+        // Поперечная перекладина для рук
+        ctx.beginPath(); ctx.moveTo(-28, -38); ctx.lineTo(28, -38); ctx.stroke();
+
+        // Пучки соломы на концах рукавов
+        ctx.fillStyle = '#fde047'; ctx.strokeStyle = OUT; ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(-28, -38); ctx.lineTo(-37, -35); ctx.lineTo(-35, -41); ctx.closePath();
+        ctx.moveTo(28, -38); ctx.lineTo(37, -35); ctx.lineTo(35, -41); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+
+        // Рубашка (клетчатая)
+        ctx.fillStyle = '#dc2626'; ctx.strokeStyle = OUT; ctx.lineWidth = 2.2;
+        ctx.beginPath(); ctx.roundRect(-14, -46, 28, 26, 4); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(-10, -36, 6, 6); ctx.fillRect(4, -36, 6, 6); ctx.fillRect(-3, -44, 6, 6);
+
+        // Голова из мешковины
+        ctx.fillStyle = '#d97706'; ctx.strokeStyle = OUT; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, -58, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+        // Глазки-пуговицы и улыбка крестиком
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath(); ctx.arc(-4, -60, 2, 0, Math.PI * 2); ctx.arc(4, -60, 2, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#78350f'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(0, -55, 5, 0.2, Math.PI - 0.2); ctx.stroke();
+
+        // Шляпа пугала
+        ctx.fillStyle = '#b45309'; ctx.strokeStyle = OUT; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(0, -66, 17, 4.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.roundRect(-8, -78, 16, 13, [5, 5, 0, 0]); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#ef4444'; ctx.fillRect(-7.5, -70, 15, 3);
+    }
+
+    drawBell(ctx, p, t) {
+        const OUT = '#3f2a17';
+        this.shadow(ctx, p.x, p.y + 2, 26, 8);
+        ctx.translate(p.x, p.y);
+
+        // Опорная деревянная арка
+        ctx.strokeStyle = '#78350f'; ctx.lineWidth = 4.5; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(-16, 2); ctx.lineTo(-16, -48);
+        ctx.moveTo(16, 2); ctx.lineTo(16, -48);
+        ctx.moveTo(-22, -48); ctx.lineTo(22, -48);
+        ctx.stroke();
+
+        // Колокол с раскачиванием от звона
+        ctx.save();
+        ctx.translate(0, -46);
+        const swing = Math.sin(t * 26) * (p.ringT || 0) * 0.35;
+        ctx.rotate(swing);
+
+        // Золотистый колокол
+        ctx.fillStyle = '#f59e0b'; ctx.strokeStyle = OUT; ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-4, 0); ctx.lineTo(4, 0);
+        ctx.lineTo(8, 16); ctx.quadraticCurveTo(12, 22, 14, 25);
+        ctx.lineTo(-14, 25); ctx.quadraticCurveTo(-12, 22, -8, 16);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+
+        // Юбка колокола и язычок
+        ctx.fillStyle = '#d97706';
+        ctx.beginPath(); ctx.ellipse(0, 25, 14, 3.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#78350f';
+        ctx.beginPath(); ctx.arc(0, 28, 3, 0, Math.PI * 2); ctx.fill();
+
+        // Веревочка
+        ctx.strokeStyle = '#d97706'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(0, 28); ctx.lineTo(2, 42); ctx.stroke();
+        ctx.restore();
+
+        // Звуковые волны при звоне
+        if (p.ringT > 0.05) {
+            ctx.strokeStyle = `rgba(255, 215, 64, ${p.ringT * 0.8})`;
+            ctx.lineWidth = 2;
+            const rWave = (1 - p.ringT) * 36 + 18;
+            ctx.beginPath(); ctx.arc(0, -32, rWave, -Math.PI * 0.8, -Math.PI * 0.2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(0, -32, rWave * 1.3, -Math.PI * 0.75, -Math.PI * 0.25); ctx.stroke();
         }
     }
 

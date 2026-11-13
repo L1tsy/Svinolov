@@ -99,32 +99,43 @@ class Shop {
         return `<div class="pips">${s}</div>`;
     }
 
+    _renderUpgradeCard(up, save) {
+        const lvl = (save.upgrades && save.upgrades[up.id]) || 0;
+        const maxed = lvl >= up.max;
+        let btn, fx;
+        if (maxed) {
+            btn = '<button type="button" class="btn yellow" disabled>⭐ МАКС</button>';
+            fx = `<span class="now">${up.fx(lvl)}</span>`;
+        } else {
+            const cost = upgradeCost(up, lvl);
+            const can = save.coins >= cost;
+            btn = `<button type="button" class="btn green ${can ? 'can' : 'off'}" data-silent="1" data-act="upgrade" data-id="${up.id}">Улучшить · 🪙 ${U.fmt(cost)}</button>`;
+            fx = `<span class="now">${up.fx(lvl)}</span><span>➜</span><span class="next">${up.fx(lvl + 1)}</span>`;
+        }
+        return `<div class="card${maxed ? ' maxed' : ''}" data-id="${up.id}">
+            <div class="card-head"><div class="card-ico">${up.icon}</div>
+                <div><div class="card-title">${up.title}</div><div class="card-desc">${up.desc}</div></div></div>
+            <div class="pips-label"><span>Уровень ${lvl} из ${up.max}</span></div>
+            ${this._pips(lvl, up.max)}
+            <div class="card-fx">${fx}</div>
+            ${btn}</div>`;
+    }
+
     _upgradesHtml(save) {
-        return UPGRADES.map((up) => {
-            const lvl = save.upgrades[up.id] || 0;
-            const maxed = lvl >= up.max;
-            let btn, fx;
-            if (maxed) {
-                btn = '<button type="button" class="btn yellow" disabled>⭐ МАКС</button>';
-                fx = `<span class="now">${up.fx(lvl)}</span>`;
-            } else {
-                const cost = upgradeCost(up, lvl);
-                const can = save.coins >= cost;
-                btn = `<button type="button" class="btn green ${can ? 'can' : 'off'}" data-silent="1" data-act="upgrade" data-id="${up.id}">Улучшить · 🪙 ${U.fmt(cost)}</button>`;
-                fx = `<span class="now">${up.fx(lvl)}</span><span>➜</span><span class="next">${up.fx(lvl + 1)}</span>`;
-            }
-            return `<div class="card${maxed ? ' maxed' : ''}" data-id="${up.id}">
-                <div class="card-head"><div class="card-ico">${up.icon}</div>
-                    <div><div class="card-title">${up.title}</div><div class="card-desc">${up.desc}</div></div></div>
-                <div class="pips-label"><span>Уровень ${lvl} из ${up.max}</span></div>
-                ${this._pips(lvl, up.max)}
-                <div class="card-fx">${fx}</div>
-                ${btn}</div>`;
-        }).join('');
+        const farmerUps = UPGRADES.filter(u => u.category !== 'team');
+        const helperUps = typeof HELPER_UPGRADES !== 'undefined' ? HELPER_UPGRADES : UPGRADES.filter(u => u.category === 'team');
+
+        const farmerCards = farmerUps.map(up => this._renderUpgradeCard(up, save)).join('');
+        const helperCards = helperUps.map(up => this._renderUpgradeCard(up, save)).join('');
+
+        const titleFarmer = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: #fff; margin: 4px 0 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.55);">🧑‍🌾 Снаряжение фермера</div>`;
+        const titleHelpers = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: #fff; margin: 16px 0 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.55);">🐕 Прокачка напарников и пса</div>`;
+
+        return titleFarmer + farmerCards + titleHelpers + helperCards;
     }
 
     _teamHtml(save) {
-        return TEAM.map((m) => {
+        const teamCards = TEAM.map((m) => {
             const count = save[m.id] || 0;
             const total = m.costs.length;
             let btn;
@@ -146,6 +157,14 @@ class Shop {
                 ${this._pips(count, total)}
                 ${btn}</div>`;
         }).join('');
+
+        const helperList = typeof HELPER_UPGRADES !== 'undefined' ? HELPER_UPGRADES : UPGRADES.filter(u => u.category === 'team');
+        const helperCards = helperList.map(up => this._renderUpgradeCard(up, save)).join('');
+
+        const titleTeam = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: #fff; margin: 4px 0 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.55);">👥 Найм напарников</div>`;
+        const titleUpgrades = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: #fff; margin: 16px 0 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.55);">🐕 Прокачка напарников и пса</div>`;
+
+        return titleTeam + teamCards + titleUpgrades + helperCards;
     }
 
     _hatsHtml(save) {
@@ -216,7 +235,16 @@ class Shop {
         const grid = '<div class="farm-grid">' + rows.map((r) => `<div class="stat"><span>${r[0]}</span><b>${r[1]}</b></div>`).join('') + '</div>';
 
         const pct = Math.round(CONFIG.PRESTIGE_BONUS * 100);
-        const cur = Math.round((save.prestige || 0) * CONFIG.PRESTIGE_BONUS * 100);
+        const curPrestige = save.prestige || 0;
+        const curMult = Math.round(curPrestige * CONFIG.PRESTIGE_BONUS * 100);
+        const nextPrestige = curPrestige + 1;
+        const nextBonusCoins = typeof prestigeStartingCoins === 'function'
+            ? prestigeStartingCoins(nextPrestige)
+            : (50 + 50 * nextPrestige);
+        const curBonusCoins = typeof prestigeStartingCoins === 'function'
+            ? prestigeStartingCoins(curPrestige)
+            : (curPrestige > 0 ? (50 + 50 * curPrestige) : 0);
+
         const can = this.game.canPrestige();
         const unlocked = save.day >= CONFIG.PRESTIGE_DAY;
         let action;
@@ -234,8 +262,9 @@ class Shop {
                 <li>Сбрасываются: прогресс дней, монеты, улучшения и команда.</li>
                 <li>Остаются: шляпы и достижения.</li>
                 <li>Навсегда: <b>+${pct}% монет</b> за каждую продажу.</li>
+                <li>Стартовый капитал на новый забег: <b>+${nextBonusCoins} 🪙</b></li>
             </ul>
-            <div class="bonus">Продаж: <b>${save.prestige || 0}</b> · сейчас бонус <b>+${cur}%</b></div>
+            <div class="bonus">Продаж: <b>${curPrestige}</b> · сейчас бонус <b>+${curMult}%</b>${curBonusCoins > 0 ? ` · прошлый старт: <b>+${curBonusCoins} 🪙</b>` : ''}</div>
             ${action}</div>`;
         return grid + prestige;
     }
@@ -252,7 +281,12 @@ class Shop {
         else if (act === 'hat') ok = g.buyHat(id);
         else if (act === 'prestige') {
             if (!g.canPrestige()) return;
-            if (window.confirm('Продать ферму? Прогресс дней, монеты, улучшения и команда сбросятся. Шляпы и достижения останутся, а монет навсегда станет больше.')) {
+            const nextPrestige = (g.save.prestige || 0) + 1;
+            const nextCoins = typeof prestigeStartingCoins === 'function' ? prestigeStartingCoins(nextPrestige) : (50 + 50 * nextPrestige);
+            if (window.confirm(`Продать ферму? Прогресс дней, монеты, улучшения и команда сбросятся. Шляпы и достижения останутся, а монет навсегда станет больше (+${Math.round(CONFIG.PRESTIGE_BONUS * 100)}% и стартовый капитал +${nextCoins} 🪙).`)) {
+                if (g.storage && typeof g.storage.resetPrestige === 'function') {
+                    g.storage.resetPrestige(g.save);
+                }
                 g.doPrestige();
                 this.ui.closeShop();
             }

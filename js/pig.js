@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Свинья: ИИ (блуждание, паника, усталость, таран) и процедурная отрисовка
+ * Свинья: Адаптивный умный ИИ (блуждание, паника, стайная тревога, увороты/зигзаги, укрытия, спринт) и процедурная отрисовка
  */
 class Pig {
     constructor(type, x, y, day = 1) {
@@ -10,6 +10,7 @@ class Pig {
         const d = this.def;
         this.x = x; this.y = y;
         this.r = d.r;
+        this.day = day;
         this.vx = 0; this.vy = 0;
         this.kx = 0; this.ky = 0;          // отбрасывание
         this.facing = Math.random() < 0.5 ? 1 : -1;
@@ -37,6 +38,27 @@ class Pig {
         this.spawnPop = 0;
         this.hitFlash = 0;
 
+        // --- Умный ИИ и адаптивность ---
+        // 1. Зигзаги и увороты (Evasive zig-zag / Jinking)
+        this.jinkTimer = U.rand(0.2, 0.45);
+        this.jinkSide = Math.random() < 0.5 ? 1 : -1;
+
+        // 2. Спринт-рывок при опасности (Sprint burst & stamina gauge)
+        this.sprintGauge = 1.0;          // Запас шкалы спринта (0..1)
+        this.sprintBurstT = 0;          // Таймер активного рывка
+        this.sprintCd = 0;              // Перезарядка рывка
+        this.sprintCooldownMax = 4.0;
+        this.isSprinting = false;
+
+        // 3. Стайная тревога (Pack alarm)
+        this.alarmT = 0;
+        this.alarmThreatX = 0;
+        this.alarmThreatY = 0;
+
+        // 4. Окружение и укрытия (Cover & Environment)
+        this.inCover = false;
+        this.coverT = 0;
+
         this.maxHp = d.hp ? (d.boss ? d.hp + Math.floor(day / 5) * 2 : d.hp) : 1;
         this.hp = this.maxHp;
         this.chargeCd = d.charger ? U.rand(1.5, 3) : 0;
@@ -53,6 +75,105 @@ class Pig {
     }
 
     get active() { return !this.caught && !this.gone; }
+
+    /**
+     * Динамическое масштабирование интеллекта свиньи от текущего дня и престижа.
+     * Возвращает коэффициент IQ от ~0.12 (первые дни) до 1.5+ (поздние дни и престиж).
+     */
+    getIntelligence(g) {
+        const d = this.def;
+        const currentDay = this.day || (g && g.day) || (g && g.save && g.save.day) || 1;
+        const prestige = (g && g.save && (g.save.prestige || (g.save.stats && g.save.stats.prestige))) || 0;
+
+        let iq = 0.12 + Math.min(0.85, (currentDay - 1) * 0.038) + prestige * 0.25;
+
+        if (d.ninja) iq += 0.35;
+        else if (d.gold) iq += 0.28;
+        else if (this.type === 'runner') iq += 0.20;
+        else if (d.mud) iq += 0.15;
+        else if (d.boss) iq += 0.25;
+        else if (this.type === 'big') iq += 0.10;
+        else if (this.type === 'piglet') iq -= 0.06;
+
+        return U.clamp(iq, 0.1, 1.6);
+    }
+
+    /**
+     * Сбор всех угроз на поле: игрок (включая второго игрока в коопе), напарники и собаки.
+     */
+    getThreats(g) {
+        const threats = [];
+        if (g.dogs && g.dogs.length > 0) {
+            for (const dog of g.dogs) {
+                const isTarget = (dog.target === this);
+                threats.push({
+                    x: dog.x, y: dog.y,
+                    k: isTarget ? 1.35 : 0.85,
+                    vx: dog.vx || 0, vy: dog.vy || 0,
+                    dashing: false,
+                    isDog: true
+                });
+            }
+        }
+        if (g.helpers && g.helpers.length > 0) {
+            for (const h of g.helpers) {
+                threats.push({
+                    x: h.x, y: h.y,
+                    k: 0.75,
+                    vx: h.vx || 0, vy: h.vy || 0,
+                    dashing: false
+                });
+            }
+        }
+        const players = [];
+        if (g.players && Array.isArray(g.players)) {
+            for (const p of g.players) if (p && !players.includes(p)) players.push(p);
+        }
+        if (g.player && !players.includes(g.player)) players.push(g.player);
+        if (g.player2 && !players.includes(g.player2)) players.push(g.player2);
+
+        for (const pl of players) {
+            threats.push({
+                x: pl.x, y: pl.y,
+                k: 1.0,
+                vx: pl.vx || 0, vy: pl.vy || 0,
+                dashing: (pl.dashT > 0),
+                isPlayer: true,
+                ref: pl
+            });
+        }
+        return threats;
+    }
+
+    /**
+     * Стайная тревога: когда свинья визжит или паникует,
+     * сородичи поблизости слышат это и тоже пускаются в бегство.
+     */
+    triggerPackAlarm(g, threatX, threatY) {
+        if (!g || !g.pigs || g.pigs.length <= 1) return;
+        const iq = this.getIntelligence(g);
+        const radius = (this.type === 'piglet' ? 260 : 200) * (0.85 + iq * 0.35);
+
+        for (let i = 0; i < g.pigs.length; i++) {
+            const other = g.pigs[i];
+            if (other === this || !other.active || other.state === 'caught' || other.state === 'escape') continue;
+            const dx = other.x - this.x, dy = other.y - this.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist < radius) {
+                other.receiveAlarm(this, threatX, threatY, dist / radius);
+            }
+        }
+    }
+
+    receiveAlarm(fromPig, threatX, threatY, distRatio) {
+        if (this.state === 'wander' || this.state === 'lured') {
+            this.alarmT = Math.max(this.alarmT, 1.7 * (1 - distRatio * 0.45));
+            this.alarmThreatX = threatX;
+            this.alarmThreatY = threatY;
+            if (this.alert <= 0) this.alert = 0.45;
+            this.idle = false;
+        }
+    }
 
     startBurst(angle, dur) {
         this.state = 'burst';
@@ -82,6 +203,24 @@ class Pig {
         if (this.alert > 0) this.alert -= dt;
         if (this.squealCd > 0) this.squealCd -= dt;
         if (this.barkCd > 0) this.barkCd -= dt;
+        if (this.alarmT > 0) this.alarmT -= dt;
+        if (this.coverT > 0) {
+            this.coverT -= dt;
+            if (this.coverT <= 0) this.inCover = false;
+        }
+        if (this.sprintCd > 0) this.sprintCd -= dt;
+        if (this.sprintBurstT > 0) {
+            this.sprintBurstT -= dt;
+            this.isSprinting = true;
+        } else {
+            this.isSprinting = false;
+        }
+
+        // Восстановление запаса спринта
+        if (this.sprintBurstT <= 0) {
+            const rechargeRate = 0.22 + (this.type === 'runner' ? 0.08 : 0);
+            this.sprintGauge = Math.min(1, this.sprintGauge + dt * rechargeRate);
+        }
 
         if (this.caught) {
             this.flyT += dt / this.flyDur;
@@ -99,7 +238,22 @@ class Pig {
         }
 
         let tvx = 0, tvy = 0, accel = 6;
-        const pl = g.player;
+
+        // Поиск ближайшего игрока (с поддержкой одиночной игры и коопа)
+        let targetPlayer = g.player;
+        if (g.players && g.players.length > 1) {
+            let minD = Infinity;
+            for (const p of g.players) {
+                if (!p) continue;
+                const dist = Math.hypot(p.x - this.x, p.y - this.y);
+                if (dist < minD) { minD = dist; targetPlayer = p; }
+            }
+        } else if (g.player2) {
+            const d1 = Math.hypot(g.player.x - this.x, g.player.y - this.y);
+            const d2 = Math.hypot(g.player2.x - this.x, g.player2.y - this.y);
+            targetPlayer = d2 < d1 ? g.player2 : g.player;
+        }
+        const pl = targetPlayer || g.player;
         const dpx = pl.x - this.x, dpy = pl.y - this.y, dPlayer = Math.hypot(dpx, dpy) || 1;
         let speedMul = (this.slow > 0 ? 0.5 : 1) * g.pigSpeedMul;
         let moving = true;
@@ -145,16 +299,56 @@ class Pig {
                 break;
             }
             default: {
-                // --- Свободное поведение ---
+                const iq = this.getIntelligence(g);
                 let ax = 0, ay = 0, panic = 0;
+                const threats = this.getThreats(g);
+
+                let closestThreat = null;
+                let closestThreatDist = Infinity;
+
+                // 1. Оценка угроз с динамическим радиусом паники от интеллекта
                 if (d.panicR > 0) {
-                    for (const th of g.threats) {
-                        const dx = this.x - th.x, dy = this.y - th.y, dd = Math.hypot(dx, dy) || 1, R = d.panicR * th.k;
-                        if (dd < R) { const wg = 1 - dd / R; ax += (dx / dd) * wg; ay += (dy / dd) * wg; if (wg > panic) panic = wg; }
+                    for (const th of threats) {
+                        const dx = this.x - th.x, dy = this.y - th.y;
+                        const dd = Math.hypot(dx, dy) || 1;
+                        const R = d.panicR * th.k * (0.9 + iq * 0.28);
+                        if (dd < closestThreatDist) {
+                            closestThreatDist = dd;
+                            closestThreat = th;
+                        }
+                        if (dd < R) {
+                            let wg = 1 - dd / R;
+                            // Если свинья укрылась в кустах — прямая линия видимости прервана, эффект угрозы слабее
+                            if (this.inCover) wg *= 0.65;
+
+                            let px = dx / dd, py = dy / dd;
+                            // Умные свиньи упреждают траекторию движения ловца
+                            if (iq >= 0.4 && (th.vx || th.vy)) {
+                                const leadX = (th.vx || 0) * 0.18, leadY = (th.vy || 0) * 0.18;
+                                const ldx = this.x - (th.x + leadX), ldy = this.y - (th.y + leadY);
+                                const ldd = Math.hypot(ldx, ldy) || 1;
+                                px = ldx / ldd; py = ldy / ldd;
+                            }
+                            ax += px * wg;
+                            ay += py * wg;
+                            if (wg > panic) panic = wg;
+                        }
                     }
                 }
+
+                // 2. Реакция на стайную тревогу (Pack alarm)
+                if (this.alarmT > 0 && panic < 0.8) {
+                    const adx = this.x - this.alarmThreatX, ady = this.y - this.alarmThreatY;
+                    const add = Math.hypot(adx, ady) || 1;
+                    const alarmWeight = (this.alarmT / 1.7) * 0.75;
+                    ax += (adx / add) * alarmWeight;
+                    ay += (ady / add) * alarmWeight;
+                    if (alarmWeight > panic) panic = alarmWeight;
+                }
+
                 const lured = g.lureT > 0 && !d.charger && dPlayer < 560;
 
+                // Кабан / Босс: подготовка к тарану
                 if (d.charger) {
                     this.chargeCd -= dt;
                     if (this.chargeCd <= 0 && dPlayer < d.chargeRange && g.state === 'play' && pl.stun <= 0) {
@@ -170,36 +364,202 @@ class Pig {
                     accel = 5;
                     this.stam = Math.min(d.stamina, this.stam + dt);
                 } else if (panic > 0) {
-                    if (this.state !== 'panic') {
-                        this.alert = 0.5;
-                        if (this.squealCd <= 0 && g.state === 'play') { g.sfx.oink(); this.squealCd = U.rand(2, 4); }
-                    }
+                    const wasPanic = (this.state === 'panic');
                     this.state = 'panic';
                     this.idle = false;
-                    let l = Math.hypot(ax, ay) || 1; ax /= l; ay /= l;
-                    // Стены: отталкиваемся и скользим вдоль, чтобы не застревать в углах
-                    const m = 115;
+
+                    // При начале паники подаём сигнал тревоги стае
+                    if (!wasPanic) {
+                        this.alert = 0.5;
+                        const thX = closestThreat ? closestThreat.x : pl.x;
+                        const thY = closestThreat ? closestThreat.y : pl.y;
+                        this.triggerPackAlarm(g, thX, thY);
+                        if (this.squealCd <= 0 && g.state === 'play') {
+                            g.sfx.oink();
+                            this.squealCd = U.rand(2.2, 4.0);
+                        }
+                    } else if (this.squealCd <= 0 && Math.random() < dt * 0.35 && g.state === 'play') {
+                        // Периодический визг в панике поддерживает стайную настороженность
+                        const thX = closestThreat ? closestThreat.x : pl.x;
+                        const thY = closestThreat ? closestThreat.y : pl.y;
+                        this.triggerPackAlarm(g, thX, thY);
+                        g.sfx.oink();
+                        this.squealCd = U.rand(2.6, 4.6);
+                    }
+
+                    let l = Math.hypot(ax, ay) || 1;
+                    ax /= l; ay /= l;
+
+                    // 3. Увороты и зигзаги (Evasive zig-zagging / Jinking)
+                    const threatIsDashing = closestThreat && closestThreat.dashing;
+                    const threatIsClose = closestThreatDist < (145 + iq * 40);
+                    if (threatIsClose || threatIsDashing) {
+                        this.jinkTimer -= dt;
+                        if (this.jinkTimer <= 0) {
+                            this.jinkSide = -this.jinkSide;
+                            this.jinkTimer = U.rand(0.2, 0.42) / (0.8 + iq * 0.6);
+                        }
+                        const perpX = -ay * this.jinkSide;
+                        const perpY = ax * this.jinkSide;
+                        // При рывке ловца — резкий срез под 90 градусов
+                        const jinkStr = threatIsDashing ? (1.3 + iq * 0.4) : (1 - closestThreatDist / (150 + iq * 40)) * (0.45 + iq * 0.7);
+                        ax += perpX * jinkStr;
+                        ay += perpY * jinkStr;
+                        l = Math.hypot(ax, ay) || 1; ax /= l; ay /= l;
+                    }
+
+                    // Хаотичность мелких поросят
+                    if (d.erratic) {
+                        const j = Math.sin(this.t * 8.5 + this.seed) * 0.85;
+                        const c = Math.cos(j), s = Math.sin(j);
+                        const nx = ax * c - ay * s;
+                        ay = ax * s + ay * c;
+                        ax = nx;
+                        l = Math.hypot(ax, ay) || 1; ax /= l; ay /= l;
+                    }
+
+                    // 4. Окружение и укрытия:
+                    // А) Заборы и тупики: избегание застревания в углах
+                    const m = 125 + iq * 40;
                     let wx = 0, wy = 0;
-                    if (this.x < w.margin + m) wx += 1 - (this.x - w.margin) / m; else if (this.x > w.w - w.margin - m) wx -= 1 - (w.w - w.margin - this.x) / m;
-                    if (this.y < w.margin + m) wy += 1 - (this.y - w.margin) / m; else if (this.y > w.h - w.margin - m) wy -= 1 - (w.h - w.margin - this.y) / m;
-                    if (wx || wy) { ax += wx * 1.5 - wy * this.side * 1.3; ay += wy * 1.5 + wx * this.side * 1.3; }
-                    const av = w.avoid(this.x, this.y, this.r + 34);
-                    ax += av.x * 1.6; ay += av.y * 1.6;
-                    if (d.erratic) { const j = Math.sin(this.t * 7 + this.seed) * 0.8, c = Math.cos(j), s = Math.sin(j), nx = ax * c - ay * s; ay = ax * s + ay * c; ax = nx; }
-                    l = Math.hypot(ax, ay) || 1; ax /= l; ay /= l;
+                    if (this.x < w.margin + m) wx += 1 - (this.x - w.margin) / m;
+                    else if (this.x > w.w - w.margin - m) wx -= 1 - (w.w - w.margin - this.x) / m;
+                    if (this.y < w.margin + m) wy += 1 - (this.y - w.margin) / m;
+                    else if (this.y > w.h - w.margin - m) wy -= 1 - (w.h - w.margin - this.y) / m;
+
+                    // Зажата в углу — бежим к открытому центру карты
+                    if (Math.abs(wx) > 0.25 && Math.abs(wy) > 0.25) {
+                        const cx = (w.w * 0.5 - this.x) / (w.w * 0.5);
+                        const cy = (w.h * 0.5 - this.y) / (w.h * 0.5);
+                        const escapeCornerWeight = (0.9 + iq * 0.8);
+                        ax += cx * escapeCornerWeight;
+                        ay += cy * escapeCornerWeight;
+                    } else if (wx || wy) {
+                        ax += wx * 1.6 - wy * this.side * 1.4;
+                        ay += wy * 1.6 + wx * this.side * 1.4;
+                    }
+
+                    // Обход препятствий
+                    const av = w.avoid(this.x, this.y, this.r + 36);
+                    ax += av.x * 1.8;
+                    ay += av.y * 1.8;
+
+                    // Б) Укрытие в кустах / сене (сбивает преследование)
+                    if (iq >= 0.25 && w.props && w.props.length > 0) {
+                        let bestBush = null, bestBushScore = -Infinity;
+                        for (let i = 0; i < w.props.length; i++) {
+                            const pr = w.props[i];
+                            if (pr.type !== 'bush' && pr.type !== 'hay') continue;
+                            const bdx = pr.x - this.x, bdy = pr.y - this.y;
+                            const bdist = Math.hypot(bdx, bdy);
+                            if (bdist > 280) continue;
+                            const toThreatDist = closestThreat ? Math.hypot(pr.x - closestThreat.x, pr.y - closestThreat.y) : 300;
+                            const score = (280 - bdist) + (toThreatDist > 100 ? 60 : -100);
+                            if (score > bestBushScore) {
+                                bestBushScore = score;
+                                bestBush = pr;
+                            }
+                        }
+                        if (bestBush) {
+                            const bdx = bestBush.x - this.x, bdy = bestBush.y - this.y;
+                            const bdist = Math.hypot(bdx, bdy) || 1;
+                            const coverWeight = (0.35 + iq * 0.35) * (1 - bdist / 280);
+                            ax += (bdx / bdist) * coverWeight;
+                            ay += (bdy / bdist) * coverWeight;
+
+                            if (bdist < (bestBush.r || 18) + 12) {
+                                this.inCover = true;
+                                this.coverT = 0.35;
+                            }
+                        }
+                    }
+
+                    // В) Грязь: Грязнуля и умные свиньи направляются к лужам, в которых игрок замедляется
+                    if ((d.mud || iq >= 0.5) && w.puddles && w.puddles.length > 0) {
+                        let bestPuddle = null, bestPuddleDist = 260;
+                        for (let i = 0; i < w.puddles.length; i++) {
+                            const pud = w.puddles[i];
+                            const pdx = pud.x - this.x, pdy = pud.y - this.y;
+                            const pdist = Math.hypot(pdx, pdy);
+                            if (pdist < bestPuddleDist) {
+                                bestPuddleDist = pdist;
+                                bestPuddle = pud;
+                            }
+                        }
+                        if (bestPuddle) {
+                            const pdx = bestPuddle.x - this.x, pdy = bestPuddle.y - this.y;
+                            const pdist = Math.hypot(pdx, pdy) || 1;
+                            const mudBias = d.mud ? 0.75 : 0.35 * iq;
+                            ax += (pdx / pdist) * mudBias;
+                            ay += (pdy / pdist) * mudBias;
+                        }
+                    }
+
+                    l = Math.hypot(ax, ay) || 1;
+                    ax /= l; ay /= l;
+
+                    // 5. Панический спринт-рывок (Panic sprint burst)
+                    const isCornered = (closestThreatDist < 80) ||
+                                       (threatIsDashing && closestThreatDist < 125) ||
+                                       ((wx !== 0 || wy !== 0) && closestThreatDist < 110);
+                    if (isCornered && this.sprintGauge >= 0.85 && this.sprintCd <= 0 && this.tired <= 0 && this.sprintBurstT <= 0) {
+                        this.sprintBurstT = 0.48;
+                        this.sprintGauge = 0;
+                        this.sprintCd = this.sprintCooldownMax;
+                        this.isSprinting = true;
+                        // Срезаем под углом вокруг ловца
+                        const cutX = -ay * this.jinkSide * 0.85, cutY = ax * this.jinkSide * 0.85;
+                        ax += cutX; ay += cutY;
+                        l = Math.hypot(ax, ay) || 1; ax /= l; ay /= l;
+
+                        g.fx.dust(this.x, this.y + this.r * 0.5, 4, g.dustColor);
+                        if (this.type === 'runner') {
+                            g.fx.text(this.x, this.y - this.r - 20, '⚡ ВЖУХ!', { color: '#ffd23f', size: 16, life: 0.5 });
+                        } else if (d.ninja) {
+                            g.fx.text(this.x, this.y - this.r - 20, '💨 ШАГ!', { color: '#e2e8f0', size: 16, life: 0.5 });
+                        } else {
+                            g.fx.text(this.x, this.y - this.r - 18, '💨 РЫВОК!', { color: '#bbf7d0', size: 15, life: 0.45 });
+                        }
+                        if (g.sfx && g.sfx.dash) g.sfx.dash();
+                    }
 
                     // Усталость: долго в панике — выдыхается
-                    if (this.tired > 0) { this.tired -= dt; if (this.tired <= 0) this.stam = d.stamina; }
-                    else { this.stam -= dt; if (this.stam <= 0) { this.tired = 2.3; g.fx.text(this.x, this.y - this.r - 16, 'уфф…', { color: '#bfe3ff', size: 15, life: 0.8 }); } }
-                    const v = d.panic * (this.tired > 0 ? 0.5 : 1);
-                    tvx = ax * v; tvy = ay * v; accel = 7;
+                    if (this.tired > 0) {
+                        this.tired -= dt;
+                        if (this.tired <= 0) this.stam = d.stamina;
+                    } else {
+                        this.stam -= dt;
+                        if (this.stam <= 0) {
+                            this.tired = 2.3;
+                            g.fx.text(this.x, this.y - this.r - 16, 'уфф…', { color: '#bfe3ff', size: 15, life: 0.8 });
+                        }
+                    }
+
+                    let v = d.panic * (this.tired > 0 ? 0.5 : 1);
+                    if (this.sprintBurstT > 0) {
+                        v *= 1.62;
+                        accel = 20;
+                        if (Math.random() < dt * 15) g.fx.dust(this.x, this.y + this.r * 0.5, 1, g.dustColor);
+                    } else {
+                        accel = 7.5;
+                    }
+
+                    if (d.mud && w.inMud(this.x, this.y)) {
+                        v *= 1.1;
+                    }
+
+                    tvx = ax * v; tvy = ay * v;
 
                     if (d.mud) {
                         this.mudT -= dt;
-                        if (this.mudT <= 0) { w.addPuddle(this.x, this.y + this.r * 0.5, U.rand(30, 40), 10); this.mudT = 0.85; }
+                        if (this.mudT <= 0) {
+                            w.addPuddle(this.x, this.y + this.r * 0.5, U.rand(30, 40), 10);
+                            this.mudT = 0.85;
+                        }
                     }
                     if (Math.random() < dt * 9) g.fx.dust(this.x - this.vx * 0.05, this.y + this.r * 0.6, 1, g.dustColor);
                 } else {
+                    // Спокойное блуждание (Wander) со стайным поведением (Flocking)
                     this.state = 'wander';
                     if (this.tired > 0) this.tired -= dt;
                     this.stam = Math.min(d.stamina, this.stam + dt * 1.6);
@@ -210,7 +570,31 @@ class Pig {
                         else { this.pickHeading(w); this.wT = U.rand(1.4, 3.6); }
                     }
                     if (this.idle) moving = false;
-                    else { tvx = this.hx * d.speed; tvy = this.hy * d.speed; }
+                    else {
+                        let flX = this.hx, flY = this.hy;
+                        if ((this.type === 'piglet' || this.type === 'pink') && g.pigs && g.pigs.length > 1) {
+                            let flockCount = 0, avgX = 0, avgY = 0;
+                            for (let i = 0; i < g.pigs.length; i++) {
+                                const other = g.pigs[i];
+                                if (other === this || !other.active || other.state === 'escape' || other.state === 'caught') continue;
+                                const fdx = other.x - this.x, fdy = other.y - this.y;
+                                const fdist = Math.hypot(fdx, fdy);
+                                if (fdist < 110 && fdist > 15) {
+                                    avgX += fdx; avgY += fdy;
+                                    flockCount++;
+                                }
+                            }
+                            if (flockCount > 0) {
+                                avgX /= flockCount; avgY /= flockCount;
+                                const al = Math.hypot(avgX, avgY) || 1;
+                                flX += (avgX / al) * 0.35;
+                                flY += (avgY / al) * 0.35;
+                                const flLen = Math.hypot(flX, flY) || 1;
+                                flX /= flLen; flY /= flLen;
+                            }
+                        }
+                        tvx = flX * d.speed; tvy = flY * d.speed;
+                    }
                     accel = 4;
                 }
                 this.panicLevel = panic;
@@ -268,6 +652,9 @@ class Pig {
         g.fx.smoke(this.x, this.y - 6, 12);
         this.stam = this.def.stamina;
         this.tired = 0;
+        this.sprintGauge = 1.0;
+        this.sprintBurstT = 0;
+        this.state = 'wander';
     }
 
     /* ================= Отрисовка ================= */
@@ -416,6 +803,12 @@ class Pig {
             }
             ctx.globalAlpha = 1;
         }
+        // Маскировка в кустах / траве
+        if (this.inCover) {
+            ctx.fillStyle = '#4ade80'; ctx.strokeStyle = '#166534'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.ellipse(-9, -15, 5, 2.6, -0.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.ellipse(7, -17, 5.5, 3, 0.45, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
         // Заморозка
         if (this.frozen > 0) {
             ctx.fillStyle = 'rgba(160,230,255,0.55)'; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.5;
@@ -471,6 +864,20 @@ class Pig {
             ctx.beginPath(); ctx.arc(x, top - 12, 7, 0, Math.PI * 2); ctx.stroke();
             ctx.strokeStyle = k < 0.3 ? '#ff4d6d' : '#ffe066'; ctx.lineWidth = 3.5;
             ctx.beginPath(); ctx.arc(x, top - 12, 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k); ctx.stroke();
+        }
+
+        // Шкала спринта свиньи
+        if (this.state === 'panic' || this.sprintGauge < 0.98 || this.sprintBurstT > 0) {
+            const gw = 26 * sc, gh = 3.2;
+            const gx = x - gw / 2;
+            const gy = y + (this.maxHp > 1 && !this.def.boss ? 34 : 20) * sc;
+            ctx.fillStyle = 'rgba(20,20,30,0.65)';
+            ctx.beginPath(); ctx.roundRect(gx - 1, gy - 1, gw + 2, gh + 2, 2); ctx.fill();
+            let col = '#38bdf8';
+            if (this.sprintBurstT > 0) col = '#ffdd00';
+            else if (this.sprintGauge < 0.85) col = '#94a3b8';
+            ctx.fillStyle = col;
+            ctx.beginPath(); ctx.roundRect(gx, gy, Math.max(0, gw * this.sprintGauge), gh, 1.5); ctx.fill();
         }
     }
 }

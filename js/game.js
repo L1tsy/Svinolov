@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * «Свинолов» — главный игровой цикл: состояния, механика дня, камера, отрисовка, ввод
+ * «Свинолов» — главный игровой цикл:
+ * состояния, механика дня, камера, кооп-режим (2 игрока), престиж-бонусы, отрисовка, ввод
  */
 class Game {
     constructor() {
@@ -10,9 +11,22 @@ class Game {
 
         this.storage = new StorageManager();
         this.save = this.storage.load();
+
+        // --- Стартовый капитал престижа ---
+        this.prestigeBonusCoins = this.getPrestigeStartingCoins(this.save.prestige || 0);
+        if (this.save.day === 1 && (this.save.prestige || 0) > 0 && (this.save.coins || 0) === 0 && this.prestigeBonusCoins > 0) {
+            this.save.coins = this.prestigeBonusCoins;
+            if (!this.save.stats) this.save.stats = {};
+            this.save.stats.totalCoins = Math.max(this.save.stats.totalCoins || 0, this.prestigeBonusCoins);
+            this.saveDirty = true;
+        }
+
         this.sfx = new Sfx(this.save.settings);
         this.fx = new Fx();
         this.input = { joyX: 0, joyY: 0, swingHeld: false };
+
+        // --- Режим игры: solo | coop ---
+        this.mode = this.save.mode === 'coop' ? 'coop' : 'solo';
 
         // --- Состояние ---
         this.state = 'title';          // title | intro | play | ending | result
@@ -28,12 +42,21 @@ class Game {
         this.endT = 0;
         this.titleT = 0;
 
-        this.keys = { up: false, down: false, left: false, right: false, space: false };
+        // Клавиши управления:
+        // P1: WASD + Space (взмах) + ShiftLeft (рывок)
+        // P2: Стрелки + Enter/Slash (взмах) + ShiftRight/Num0/M (рывок)
+        this.keys = {
+            w: false, s: false, a: false, d: false,
+            up: false, down: false, left: false, right: false,
+            space: false, enter: false
+        };
         this.mouseDown = false;
-        this.swingBuf = 0;
+        this.swingBuf1 = 0;
+        this.swingBuf2 = 0;
         this.touch = 'ontouchstart' in window;
 
-        this.w = 800; this.h = 600; this.dpr = 1; this.zoom = 1; this.vw = 800; this.vh = 600;
+        this.w = 800; this.h = 600; this.dpr = 1;
+        this.baseZoom = 1; this.zoom = 1; this.vw = 800; this.vh = 600;
         this.camCX = 0; this.camCY = 0; this.camX = 0; this.camY = 0;
 
         // Совместимость с Pig / Player / Helper / Dog
@@ -46,17 +69,26 @@ class Game {
         this.dustColor = 'rgba(255,255,255,0.55)';
         this.buffs = { speed: 0, net: 0, x2: 0 };
         this.reach = CONFIG.CATCH_RADIUS;
+        this.reach2 = CONFIG.CATCH_RADIUS;
         this.pigInReach = false;
+        this.pigInReach2 = false;
 
-        // День
+        // Статистика дня (включая разделение по игрокам для коопа)
         this.day = this.save.day;
         this.event = null;
         this.eventMul = 1;
         this.roster = [];
         this.total = 0;
         this.dayCaught = 0;
+        this.dayCaughtP1 = 0;
+        this.dayCaughtP2 = 0;
         this.dayCoins = 0;
+        this.dayCoinsP1 = 0;
+        this.dayCoinsP2 = 0;
         this.dayBestCombo = 0;
+        this.lastCatcher = null;       // 1 или 2
+        this.coopCatchCombo = 0;       // серия совместной ловли по очереди
+
         this.timeTotal = 60;
         this.timeLeft = 60;
         this.elapsed = 0;
@@ -83,15 +115,28 @@ class Game {
         this.tutMove = 0;
         this.tutDashed = false;
 
+        // Игроки и мир
         this.world = null;
-        this.player = null;
+        this.player = null;            // Игрок 1
+        this.player2 = null;           // Игрок 2 (в кооп-режиме)
         this.setupWorld(this.save.day, true);
-        const d = this.world.door;
-        this.player = new Player(d.x, d.y + 84);
+        this.initPlayers();
         this.recalc();
 
         this.resize();
         this.ui = new UI(this);
+
+        // --- Сетевой менеджер (WebRTC P2P для игры по сети на 2 устройствах) ---
+        this.network = (typeof NetworkManager !== 'undefined') ? new NetworkManager(this) : null;
+        this.net = this.network;
+        this.isOnline = false;
+        this.netRole = null;          // 'host' | 'guest'
+        this._spawnBarnToggle = false;
+
+        if (this.ui) {
+            this.ui.onHostRoom = () => this.hostOnlineGame();
+            this.ui.onJoinRoom = (code) => this.joinOnlineGame(code);
+        }
 
         this.bindInput();
         this.enterTitle();
@@ -107,15 +152,82 @@ class Game {
         requestAnimationFrame(loop);
     }
 
+    /* ================= Свойства доступа ================= */
+    get coins() {
+        return this.save ? this.save.coins : 0;
+    }
+
+    set coins(val) {
+        if (this.save) this.save.coins = Math.max(0, Math.floor(Number(val) || 0));
+    }
+
+    get coopCombo() { return this.coopCatchCombo; }
+    get p1Caught() { return this.dayCaughtP1; }
+    get p2Caught() { return this.dayCaughtP2; }
+    get p1Coins() { return this.dayCoinsP1; }
+    get p2Coins() { return this.dayCoinsP2; }
+
+    /** Стартовый капитал при престиже (поддерживает функцию из config.js или формулу) */
+    getPrestigeStartingCoins(prestige) {
+        const p = Math.max(0, Math.floor(Number(prestige) || 0));
+        if (p <= 0) return 0;
+        if (typeof prestigeStartingCoins === 'function') return prestigeStartingCoins(p);
+        if (CONFIG && typeof CONFIG.prestigeStartingCoins === 'function') return CONFIG.prestigeStartingCoins(p);
+        const base = (CONFIG && CONFIG.PRESTIGE_START_BASE) || 50;
+        const step = (CONFIG && CONFIG.PRESTIGE_START_STEP) || 50;
+        return base + step * p;
+    }
+
+    /* ================= Инициализация игроков ================= */
+    initPlayers() {
+        const d = this.world ? this.world.door : { x: 400, y: 300 };
+        if (this.mode === 'coop') {
+            const d1 = (this.world && this.world.door1) ? this.world.door1 : d;
+            const d2 = (this.world && this.world.door2) ? this.world.door2 : d;
+            this.player = new Player(d1.x, d1.y + 60, 1);
+            this.player2 = new Player(d2.x, d2.y + 60, 2);
+            this.setupPlayerVisuals(this.player, 1);
+            this.setupPlayerVisuals(this.player2, 2);
+        } else {
+            this.player = new Player(d.x, d.y + 84, 1);
+            this.player2 = null;
+            this.setupPlayerVisuals(this.player, 1);
+        }
+    }
+
+    setupPlayerVisuals(p, id = 1) {
+        if (!p) return;
+        p.id = id;
+        if (id === 1) {
+            p.hat = this.save.hat || 'straw';
+            p.suit = p.suit || '#3b82f6';
+            p.shirt = p.shirt || '#f4f1e8';
+        } else {
+            p.hat = p.hat || 'cap';
+            p.suit = p.suit || '#06b6d4';
+            p.shirt = p.shirt || '#ffedd5';
+            p.hatColor = p.hatColor || '#ec4899';
+        }
+    }
+
     /* ================= Производные характеристики ================= */
     recalc() {
-        const u = this.save.upgrades, p = this.player;
+        const u = this.save.upgrades;
         const lv = (id) => Math.max(0, Number(u[id]) || 0);
-        p.speed = CONFIG.PLAYER_SPEED * (1 + 0.06 * lv('boots'));
-        p.catchRadius = CONFIG.CATCH_RADIUS * (1 + 0.08 * lv('net'));
-        p.swingCd = CONFIG.SWING_COOLDOWN * Math.pow(0.9, lv('hands'));
-        p.dashCd = CONFIG.DASH_COOLDOWN * Math.pow(0.87, lv('dash'));
-        p.hat = this.save.hat;
+
+        const applyStats = (p, id = 1) => {
+            if (!p) return;
+            p.id = id;
+            p.speed = CONFIG.PLAYER_SPEED * (1 + 0.06 * lv('boots'));
+            p.catchRadius = CONFIG.CATCH_RADIUS * (1 + 0.08 * lv('net'));
+            p.swingCd = CONFIG.SWING_COOLDOWN * Math.pow(0.9, lv('hands'));
+            p.dashCd = CONFIG.DASH_COOLDOWN * Math.pow(0.87, lv('dash'));
+            this.setupPlayerVisuals(p, id);
+        };
+
+        applyStats(this.player, 1);
+        if (this.player2) applyStats(this.player2, 2);
+
         this.comboBonus = 0.5 * lv('combo');
         this.coinMult = (1 + 0.15 * lv('bank')) * (1 + CONFIG.PRESTIGE_BONUS * (this.save.prestige || 0));
         this.clockBonus = 6 * lv('clock');
@@ -138,12 +250,14 @@ class Game {
         this.dogs.length = Math.min(this.dogs.length, nd);
     }
 
-    /* ================= Мир ================= */
+    /* ================= Мир и смена режимов ================= */
     setupWorld(day, silent) {
         const tier = tierForDay(day), si = seasonForDay(day);
         const prev = this.world;
-        if (prev && prev.tier === tier && prev.seasonIdx === si) return false;
-        this.world = new World(tier, si);
+        const coopMapIdx = Math.max(0, (day - 1) % 3);
+        if (prev && prev.tier === tier && prev.seasonIdx === si && prev.mode === this.mode && (this.mode !== 'coop' || prev.coopMapIdx === coopMapIdx)) return false;
+        this.world = new World(tier, si, this.mode, coopMapIdx);
+        if (this.world) this.world.mode = this.mode;
         const sid = this.world.season.id;
         this.dustColor = (sid === 'summer' || sid === 'winter') ? 'rgba(255,255,255,0.55)' : 'rgba(196,160,110,0.55)';
         this.weatherAcc = 0;
@@ -154,12 +268,40 @@ class Game {
         return true;
     }
 
+    setMode(mode) {
+        const next = mode === 'coop' ? 'coop' : 'solo';
+        if (this.mode === next && ((next === 'coop' && this.player2) || (next === 'solo' && !this.player2))) return this.mode;
+        this.mode = next;
+        this.save.mode = next;
+        this.saveDirty = true;
+
+        this.setupWorld(this.day, true);
+        this.initPlayers();
+        this.resetPlayerAtGate();
+        this.recalc();
+
+        if (this.ui) {
+            if (typeof this.ui._syncModeUI === 'function') this.ui._syncModeUI();
+            if (typeof this.ui.onModeChanged === 'function') this.ui.onModeChanged(this.mode);
+        }
+        return this.mode;
+    }
+
+    toggleMode() {
+        return this.setMode(this.mode === 'coop' ? 'solo' : 'coop');
+    }
+
+    getMode() {
+        return this.mode;
+    }
+
     /* ================= Размеры ================= */
     resize() {
         const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
         this.w = w; this.h = h;
         this.dpr = Math.min(window.devicePixelRatio || 1, 2);
-        this.zoom = U.clamp(Math.min(w / 1150, h / 700), 0.55, 1.4);
+        this.baseZoom = U.clamp(Math.min(w / 1150, h / 700), 0.55, 1.4);
+        this.zoom = this.baseZoom;
         this.vw = w / this.zoom; this.vh = h / this.zoom;
         this.canvas.width = Math.floor(w * this.dpr);
         this.canvas.height = Math.floor(h * this.dpr);
@@ -173,7 +315,7 @@ class Game {
         window.addEventListener('pagehide', () => this.persist());
         window.addEventListener('beforeunload', () => this.persist());
         window.addEventListener('blur', () => {
-            this.keys.up = this.keys.down = this.keys.left = this.keys.right = this.keys.space = false;
+            for (const k in this.keys) this.keys[k] = false;
             this.mouseDown = false;
             if (['play', 'intro', 'ending'].includes(this.state) && !this.paused && !this.ui.modalOpen) this.ui.openPause();
         });
@@ -186,29 +328,72 @@ class Game {
                 return;
             }
             if (this.ui.modalOpen) return;
+
             switch (c) {
-                case 'KeyW': case 'ArrowUp': this.keys.up = true; e.preventDefault(); break;
-                case 'KeyS': case 'ArrowDown': this.keys.down = true; e.preventDefault(); break;
-                case 'KeyA': case 'ArrowLeft': this.keys.left = true; e.preventDefault(); break;
-                case 'KeyD': case 'ArrowRight': this.keys.right = true; e.preventDefault(); break;
+                // Игрок 1: WASD
+                case 'KeyW': this.keys.w = true; e.preventDefault(); break;
+                case 'KeyS': this.keys.s = true; e.preventDefault(); break;
+                case 'KeyA': this.keys.a = true; e.preventDefault(); break;
+                case 'KeyD': this.keys.d = true; e.preventDefault(); break;
+
+                // Игрок 2 (или Игрок 1 в соло-режиме): Стрелки
+                case 'ArrowUp': this.keys.up = true; e.preventDefault(); break;
+                case 'ArrowDown': this.keys.down = true; e.preventDefault(); break;
+                case 'ArrowLeft': this.keys.left = true; e.preventDefault(); break;
+                case 'ArrowRight': this.keys.right = true; e.preventDefault(); break;
+
+                // Взмах сачком Игрока 1 (Space)
                 case 'Space':
                     this.keys.space = true;
-                    if (!e.repeat) this.swingBuf = 0.15;
+                    if (!e.repeat) this.swingBuf1 = 0.15;
                     e.preventDefault();
                     break;
-                case 'ShiftLeft': case 'ShiftRight':
-                    if (!e.repeat) this.requestDash();
+
+                // Взмах сачком Игрока 2 (Enter / NumEnter / Slash / Period)
+                case 'Enter': case 'NumpadEnter': case 'Slash': case 'Period':
+                    if (this.mode === 'coop') {
+                        this.keys.enter = true;
+                        if (!e.repeat) this.swingBuf2 = 0.15;
+                        e.preventDefault();
+                    } else {
+                        // В соло-режиме Enter тоже срабатывает для Игрока 1
+                        this.keys.space = true;
+                        if (!e.repeat) this.swingBuf1 = 0.15;
+                    }
                     break;
+
+                // Рывок Игрока 1 (Left Shift)
+                case 'ShiftLeft':
+                    if (!e.repeat) this.requestDash(1);
+                    break;
+
+                // Рывок Игрока 2 (Right Shift / Num0 / KeyM)
+                case 'ShiftRight': case 'Numpad0': case 'KeyM':
+                    if (!e.repeat) {
+                        if (this.mode === 'coop') this.requestDash(2);
+                        else this.requestDash(1);
+                    }
+                    break;
+
                 default: break;
             }
         });
+
         window.addEventListener('keyup', (e) => {
             switch (e.code) {
-                case 'KeyW': case 'ArrowUp': this.keys.up = false; break;
-                case 'KeyS': case 'ArrowDown': this.keys.down = false; break;
-                case 'KeyA': case 'ArrowLeft': this.keys.left = false; break;
-                case 'KeyD': case 'ArrowRight': this.keys.right = false; break;
+                case 'KeyW': this.keys.w = false; break;
+                case 'KeyS': this.keys.s = false; break;
+                case 'KeyA': this.keys.a = false; break;
+                case 'KeyD': this.keys.d = false; break;
+                case 'ArrowUp': this.keys.up = false; break;
+                case 'ArrowDown': this.keys.down = false; break;
+                case 'ArrowLeft': this.keys.left = false; break;
+                case 'ArrowRight': this.keys.right = false; break;
                 case 'Space': this.keys.space = false; break;
+                case 'Enter': case 'NumpadEnter': case 'Slash': case 'Period':
+                    this.keys.enter = false;
+                    if (this.mode !== 'coop') this.keys.space = false;
+                    break;
                 default: break;
             }
         });
@@ -218,8 +403,13 @@ class Game {
             if (e.pointerType === 'touch') return;
             this.sfx.init();
             if (this.ui.modalOpen) return;
-            if (e.button === 0) { this.mouseDown = true; this.swingBuf = 0.15; }
-            else if (e.button === 2) { this.requestDash(); e.preventDefault(); }
+            const targetP = (this.isOnline && this.netRole === 'guest') ? 2 : 1;
+            if (e.button === 0) {
+                this.mouseDown = true;
+                if (targetP === 2) this.swingBuf2 = 0.15;
+                else this.swingBuf1 = 0.15;
+            }
+            else if (e.button === 2) { this.requestDash(targetP); e.preventDefault(); }
         });
         const up = (e) => { if (e.pointerType !== 'touch' && e.button === 0) this.mouseDown = false; };
         window.addEventListener('pointerup', up);
@@ -230,25 +420,69 @@ class Game {
         return !this.ui.modalOpen && !this.paused && (this.state === 'play' || this.state === 'intro' || this.state === 'ending');
     }
 
-    moveVector() {
+    moveVector(playerIdx = 1) {
         if (!this.inputAllowed()) return { x: 0, y: 0 };
         const k = this.keys;
-        let x = (k.right ? 1 : 0) - (k.left ? 1 : 0) + (Number(this.input.joyX) || 0);
-        let y = (k.down ? 1 : 0) - (k.up ? 1 : 0) + (Number(this.input.joyY) || 0);
+        let x = 0, y = 0;
+
+        if (this.isOnline) {
+            if (this.netRole === 'host') {
+                if (playerIdx === 1) {
+                    x = ((k.d || k.right) ? 1 : 0) - ((k.a || k.left) ? 1 : 0) + (Number(this.input.joyX) || 0);
+                    y = ((k.s || k.down) ? 1 : 0) - ((k.w || k.up) ? 1 : 0) + (Number(this.input.joyY) || 0);
+                } else {
+                    return { x: 0, y: 0 };
+                }
+            } else if (this.netRole === 'guest') {
+                if (playerIdx === 2) {
+                    x = ((k.d || k.right) ? 1 : 0) - ((k.a || k.left) ? 1 : 0) + (Number(this.input.joyX) || 0);
+                    y = ((k.s || k.down) ? 1 : 0) - ((k.w || k.up) ? 1 : 0) + (Number(this.input.joyY) || 0);
+                } else {
+                    return { x: 0, y: 0 };
+                }
+            }
+        } else if (playerIdx === 1) {
+            if (this.mode === 'coop') {
+                x = (k.d ? 1 : 0) - (k.a ? 1 : 0) + (Number(this.input.joyX) || 0);
+                y = (k.s ? 1 : 0) - (k.w ? 1 : 0) + (Number(this.input.joyY) || 0);
+            } else {
+                x = ((k.d || k.right) ? 1 : 0) - ((k.a || k.left) ? 1 : 0) + (Number(this.input.joyX) || 0);
+                y = ((k.s || k.down) ? 1 : 0) - ((k.w || k.up) ? 1 : 0) + (Number(this.input.joyY) || 0);
+            }
+        } else if (playerIdx === 2 && this.mode === 'coop') {
+            x = (k.right ? 1 : 0) - (k.left ? 1 : 0);
+            y = (k.down ? 1 : 0) - (k.up ? 1 : 0);
+        }
+
         const l = Math.hypot(x, y);
         if (l > 1) { x /= l; y /= l; }
         return { x, y };
     }
 
-    requestDash() {
+    requestDash(playerIdx = null) {
         if (this.state !== 'play' || this.paused || this.ui.modalOpen) return false;
-        const m = this.moveVector();
-        if (!this.player.startDash(m.x, m.y)) return false;
+        let pNum = playerIdx;
+        if (pNum === null) {
+            pNum = (this.isOnline && this.netRole === 'guest') ? 2 : 1;
+        }
+        const target = pNum === 1 ? this.player : (this.mode === 'coop' ? this.player2 : null);
+        if (!target) return false;
+
+        const m = this.moveVector(pNum);
+        if (!target.startDash(m.x, m.y)) return false;
+
         this.sfx.init();
         this.sfx.dash();
-        this.dashUsed = true;
-        this.fx.dust(this.player.x, this.player.y + 14, 5, this.dustColor);
-        if (this.tutStep === 2) this.finishTutorial(); else this.tutDashed = true;
+        if (pNum === 1) this.dashUsed = true;
+        this.fx.dust(target.x, target.y + 14, 5, this.dustColor);
+
+        if (pNum === 1) {
+            if (this.tutStep === 2) this.finishTutorial(); else this.tutDashed = true;
+        }
+
+        if (this.isOnline && this.network) {
+            this.network.broadcastEvent('PLAYER_DASH', { p: pNum, x: target.x, y: target.y, vx: target.vx, vy: target.vy });
+        }
         return true;
     }
 
@@ -261,8 +495,22 @@ class Game {
         this.startDay(this.save.day);
     }
 
-    nextDay() { this.sfx.init(); this.ui.hideResult(); this.startDay(this.save.day); }
-    retryDay() { this.sfx.init(); this.ui.hideResult(); this.startDay(this.save.day); }
+    nextDay() {
+        this.sfx.init();
+        this.ui.hideResult();
+        if (this.isOnline && this.network && this.netRole === 'host') {
+            this.network.broadcastEvent('NEXT_DAY', { day: this.save.day });
+        }
+        this.startDay(this.save.day);
+    }
+    retryDay() {
+        this.sfx.init();
+        this.ui.hideResult();
+        if (this.isOnline && this.network && this.netRole === 'host') {
+            this.network.broadcastEvent('RETRY_DAY', { day: this.save.day });
+        }
+        this.startDay(this.save.day);
+    }
     setPaused(p) { this.paused = !!p; }
 
     buyUpgrade(id) {
@@ -320,14 +568,20 @@ class Game {
 
     doPrestige() {
         if (!this.canPrestige()) return false;
-        const s = this.save;
-        s.prestige = (s.prestige || 0) + 1;
-        s.stats.prestige = s.prestige;
-        s.coins = 0;
-        s.day = 1;
-        for (const u of UPGRADES) s.upgrades[u.id] = 0;
-        s.helpers = 0;
-        s.dogs = 0;
+        if (this.storage.resetPrestige) {
+            this.save = this.storage.resetPrestige(this.save);
+        } else {
+            const s = this.save;
+            s.prestige = (s.prestige || 0) + 1;
+            s.stats.prestige = s.prestige;
+            const startCoins = this.getPrestigeStartingCoins(s.prestige);
+            s.coins = startCoins;
+            s.day = 1;
+            for (const u of UPGRADES) s.upgrades[u.id] = 0;
+            s.helpers = 0;
+            s.dogs = 0;
+        }
+        this.coins = this.save.coins;
         this.checkAch(true);
         this.persist();
         this.noSave = true;
@@ -376,15 +630,37 @@ class Game {
         this.resetPlayerAtGate();
         this.camCX = w.barn.x; this.camCY = w.barn.y;
         this.ui.setHud(false);
+        if (this.ui && typeof this.ui._syncModeUI === 'function') this.ui._syncModeUI();
         this.ui.showTitle();
     }
 
     resetPlayerAtGate() {
-        const p = this.player, d = this.world.door;
-        p.x = d.x; p.y = d.y + 84;
-        p.vx = p.vy = 0; p.stun = 0; p.invuln = 0; p.cd = 0; p.dashT = 0; p.dashCdT = 0; p.swingT = 0;
-        p.trail.length = 0; p.facing = 1; p.aimX = 1; p.aimY = 0;
-        this.world.resolve(p, p.r);
+        const w = this.world;
+        const d1 = (this.mode === 'coop' && w && w.door1) ? w.door1 : (w ? w.door : { x: 400, y: 300 });
+        const d2 = (this.mode === 'coop' && w && w.door2) ? w.door2 : (w ? w.door : { x: 400, y: 300 });
+
+        const resetP = (p, x, y, id = 1) => {
+            if (!p) return;
+            p.id = id;
+            p.x = x; p.y = y;
+            p.vx = p.vy = 0; p.stun = 0; p.invuln = 0; p.cd = 0; p.dashT = 0; p.dashCdT = 0; p.swingT = 0;
+            p.trail.length = 0; p.facing = id === 2 ? -1 : 1; p.aimX = id === 2 ? -1 : 1; p.aimY = 0;
+            if (this.world) this.world.resolve(p, p.r);
+        };
+
+        if (this.mode === 'coop') {
+            if (!this.player) this.player = new Player(d1.x, d1.y + 60, 1);
+            resetP(this.player, d1.x, d1.y + 60, 1);
+
+            if (!this.player2) this.player2 = new Player(d2.x, d2.y + 60, 2);
+            resetP(this.player2, d2.x, d2.y + 60, 2);
+        } else {
+            if (!this.player) this.player = new Player(d1.x, d1.y + 84, 1);
+            resetP(this.player, d1.x, d1.y + 84, 1);
+            this.player2 = null;
+        }
+
+        const p = this.player;
         this.helpers.forEach((h, i) => { h.x = p.x + (i - 1) * 44; h.y = p.y + 34; h.vx = h.vy = 0; h.target = null; h.cd = U.rand(0.3, 1); });
         this.dogs.forEach((o, i) => { o.x = p.x - 44 - i * 30; o.y = p.y + 28; o.vx = o.vy = 0; o.target = null; o.rest = 0; });
     }
@@ -411,7 +687,7 @@ class Game {
         this.quest = makeQuest(day, this.roster);
         this.elapsed = 0;
 
-        // Сброс состояния
+        // Сброс состояния дня
         this.pigs = [];
         this.spawnQueue = [];
         this.powerups = [];
@@ -419,7 +695,16 @@ class Game {
         this.buffs.speed = this.buffs.net = this.buffs.x2 = 0;
         this.lureT = 0;
         this.combo = 0; this.comboT = 0; this.comboPulse = 0;
-        this.dayCaught = 0; this.dayCoins = 0; this.dayBestCombo = 0;
+        this.dayCaught = 0;
+        this.dayCaughtP1 = 0;
+        this.dayCaughtP2 = 0;
+        this.dayCoins = 0;
+        this.dayCoinsP1 = 0;
+        this.dayCoinsP2 = 0;
+        this.dayBestCombo = 0;
+        this.lastCatcher = null;
+        this.coopCatchCombo = 0;
+
         this.dashUsed = false; this.stunned = false; this.pickups = 0;
         this.bossPiglets = 0; this.winPlayed = false; this.hitStop = 0; this.slowT = 0; this.timeScale = 1;
         this.lastTickSec = -1;
@@ -463,9 +748,10 @@ class Game {
             this.waves.push({ at: this.timeTotal * 0.48, list: others.slice(half) });
         }
 
-        // Игрок и команда
+        // Игрок(и) и команда
         this.resetPlayerAtGate();
-        this.camCX = this.player.x; this.camCY = this.player.y - 30;
+        const focusP = (this.isOnline && this.netRole === 'guest' && this.player2) ? this.player2 : this.player;
+        this.camCX = focusP.x; this.camCY = focusP.y - 30;
         this.prewarmWeather();
 
         // Баннер
@@ -473,9 +759,9 @@ class Game {
         let tipShown = false;
         if (this.roster.includes('boss')) sub = '⚠ ХРЯК-БОСС';
         else {
-            const nt = this.roster.find((t) => PIG_TYPES[t].tip && !s.seen[t]);
+            const nt = this.roster.find((t) => PIG_TYPES[t] && PIG_TYPES[t].tip && !s.seen[t]);
             if (nt) { sub = PIG_TYPES[nt].tip; s.seen[nt] = true; tipShown = true; this.saveDirty = true; }
-            else if (this.event) sub = EVENTS[this.event].icon + ' ' + EVENTS[this.event].title;
+            else if (this.event && EVENTS[this.event]) sub = EVENTS[this.event].icon + ' ' + EVENTS[this.event].title;
         }
         const ev = this.event ? EVENTS[this.event] : null;
         if (zone) {
@@ -508,12 +794,22 @@ class Game {
         list.forEach((t, i) => this.spawnQueue.push({ type: t, t: 0.1 + i * 0.14 }));
     }
 
-    spawnPig(type) {
-        const d = this.world.door;
+    spawnPig(type, doorOverride) {
+        let d = this.world.door;
+        if (this.mode === 'coop' && this.world.doors && this.world.doors.length > 1) {
+            this._spawnBarnToggle = !this._spawnBarnToggle;
+            d = this._spawnBarnToggle ? (this.world.door2 || this.world.doors[1]) : (this.world.door1 || this.world.doors[0]);
+        }
+        if (doorOverride) d = doorOverride;
         const p = new Pig(type, d.x + U.rand(-24, 24), d.y + 6, this.day);
         p.startBurst(Math.PI / 2 + U.rand(-1.3, 1.3), U.rand(0.7, 1.1));
         this.pigs.push(p);
-        this.world.barnOpen = Math.max(this.world.barnOpen, 0.6);
+
+        if (d === this.world.door2) {
+            this.world.barn2Open = Math.max(this.world.barn2Open || 0, 0.6);
+        } else {
+            this.world.barnOpen = Math.max(this.world.barnOpen, 0.6);
+        }
         this.fx.dust(d.x + U.rand(-20, 20), d.y + 8, 3, this.dustColor);
         if (type === 'boss') { this.sfx.roar(); this.fx.addShake(10); }
         return p;
@@ -526,7 +822,8 @@ class Game {
     }
 
     spawnGold() {
-        const sp = this.world.freeSpot(30, this.player, 350, 700);
+        const anchor = (this.mode === 'coop' && this.player2) ? { x: (this.player.x + this.player2.x) / 2, y: (this.player.y + this.player2.y) / 2 } : this.player;
+        const sp = this.world.freeSpot(30, anchor, 350, 700);
         const p = new Pig('gold', sp.x, sp.y, this.day);
         p.counts = false;
         this.pigs.push(p);
@@ -541,20 +838,28 @@ class Game {
         const bag = [];
         for (const id of ids) { const n = id === 'clock' ? 1 : 3; for (let i = 0; i < n; i++) bag.push(id); }
         const id = U.pick(bag);
-        const sp = this.world.freeSpot(24, this.player, 200, 600);
+        const anchor = (this.mode === 'coop' && this.player2) ? { x: (this.player.x + this.player2.x) / 2, y: (this.player.y + this.player2.y) / 2 } : this.player;
+        const sp = this.world.freeSpot(24, anchor, 200, 600);
         this.powerups.push({ id, x: sp.x, y: sp.y, life: CONFIG.POWERUP_LIFETIME, seed: Math.random() * 10 });
         this.fx.ring(sp.x, sp.y - 10, 24, POWERUPS[id].color, 0.4, 3);
     }
 
     /* ================= Колбэки для Pig / Player ================= */
-    hitPlayer(pig) {
-        const p = this.player;
-        if (p.invuln > 0) return false;
+    hitPlayer(pig, targetPlayer) {
+        let p = targetPlayer;
+        if (!p) {
+            const d1 = U.dist(this.player.x, this.player.y, pig.x, pig.y);
+            const d2 = (this.mode === 'coop' && this.player2) ? U.dist(this.player2.x, this.player2.y, pig.x, pig.y) : Infinity;
+            p = (d2 < d1 && d2 < pig.r + this.player2.r + 20) ? this.player2 : this.player;
+        }
+        if (!p || p.invuln > 0) return false;
+
         p.stun = CONFIG.STUN_TIME;
         p.invuln = CONFIG.STUN_TIME + 1.5;
         p.dashT = 0;
         const dx = p.x - pig.x, dy = p.y - pig.y, l = Math.hypot(dx, dy) || 1;
         p.vx = (dx / l) * 520; p.vy = (dy / l) * 520;
+
         if (this.combo >= 3) this.sfx.comboBreak();
         this.combo = 0; this.comboT = 0;
         this.stunned = true;
@@ -567,9 +872,18 @@ class Game {
     }
 
     onPigArrived(pig) {
-        const w = this.world, d = w.door;
-        w.barnBounce = 1;
-        w.barnOpen = Math.max(w.barnOpen, 0.4);
+        const w = this.world;
+        let d = w.door;
+        if (w.doors && w.doors.length > 1) {
+            d = (typeof w.getClosestDoor === 'function') ? w.getClosestDoor(pig.tx || pig.x, pig.ty || pig.y) : w.doors[0];
+        }
+        if (d === w.door2) {
+            w.barn2Bounce = 1;
+            w.barn2Open = Math.max(w.barn2Open || 0, 0.4);
+        } else {
+            w.barnBounce = 1;
+            w.barnOpen = Math.max(w.barnOpen, 0.4);
+        }
         this.fx.dust(d.x + U.rand(-16, 16), d.y - 14, 4, this.dustColor);
         this.fx.ring(d.x, d.y - 24, 26, 'rgba(255,255,255,0.7)', 0.3, 3);
     }
@@ -581,17 +895,35 @@ class Game {
     onPigGone(pig) { /* сбежавшие свиньи просто пропадают; счёт считается по итогам дня */ }
 
     /* ================= Взмах и поимка ================= */
-    doSwing() {
-        const p = this.player;
-        if (!p.canSwing()) return false;
-        const res = this.sweep(p, this.reach);
+    reachFor(p) {
+        if (!p) return CONFIG.CATCH_RADIUS;
+        const r = p.catchRadius || CONFIG.CATCH_RADIUS;
+        return r * (this.buffs.net > 0 ? 1.8 : 1);
+    }
+
+    doSwing(playerIdx = null) {
+        let pNum = playerIdx;
+        if (pNum === null) {
+            pNum = (this.isOnline && this.netRole === 'guest') ? 2 : 1;
+        }
+        const p = pNum === 1 ? this.player : (this.mode === 'coop' ? this.player2 : null);
+        if (!p || !p.canSwing()) return false;
+        const reach = this.reachFor(p);
+        const res = this.sweep(p, reach);
         p.swing(res.hits === 0);
         this.sfx.swing();
+        if (this.world && typeof this.world.triggerInteractive === 'function') {
+            this.world.triggerInteractive(p.x, p.y, reach, this);
+        }
+
+        if (this.isOnline && this.network) {
+            this.network.broadcastEvent('PLAYER_SWING', { p: pNum, miss: res.hits === 0, x: p.x, y: p.y });
+        }
         return true;
     }
 
     sweep(catcher, radius) {
-        const isPlayer = catcher === this.player;
+        const isPlayer = catcher === this.player || (this.mode === 'coop' && catcher === this.player2);
         let hits = 0, caught = 0;
         const list = this.pigs.slice();
         for (const pig of list) {
@@ -663,11 +995,47 @@ class Game {
     }
 
     catchPig(pig, catcher) {
-        const isP = catcher === this.player;
+        const isP1 = catcher === this.player;
+        const isP2 = this.mode === 'coop' && catcher === this.player2;
+        const isP = isP1 || isP2;
+        const pNum = isP1 ? 1 : (isP2 ? 2 : 0);
+
         const w = this.world, s = this.save, st = s.stats;
-        pig.catchTo(w.door.x, w.door.y - 20);
+        let door = w.door;
+        if (this.mode === 'coop' && typeof w.getDoorForPlayer === 'function' && pNum > 0) {
+            door = w.getDoorForPlayer(pNum);
+        } else if (w.doors && w.doors.length > 1) {
+            let bd = Infinity;
+            for (const d of w.doors) {
+                if (!d) continue;
+                const dist = U.dist(pig.x, pig.y, d.x, d.y);
+                if (dist < bd) { bd = dist; door = d; }
+            }
+        }
+        pig.catchTo(door.x, door.y - 20);
         pig.frozen = 0;
         if (pig.counts) this.dayCaught++;
+
+        if (pNum === 1) this.dayCaughtP1++;
+        else if (pNum === 2) this.dayCaughtP2++;
+
+        // Совместное кооперативное комбо при ловле по очереди (P1 -> P2 -> P1...)
+        if (this.mode === 'coop' && pNum > 0) {
+            if (this.lastCatcher && this.lastCatcher !== pNum) {
+                this.coopCatchCombo++;
+                const coopBonus = 3 * this.coopCatchCombo;
+                this.addCoins(coopBonus);
+                if (pNum === 1) this.dayCoinsP1 += coopBonus; else this.dayCoinsP2 += coopBonus;
+
+                const midX = (this.player.x + (this.player2 ? this.player2.x : this.player.x)) / 2;
+                const midY = (this.player.y + (this.player2 ? this.player2.y : this.player.y)) / 2;
+                this.fx.text(midX, midY - 38, '🤝 КООП-КОМБО x' + this.coopCatchCombo + ' (+' + coopBonus + ' 🪙)', { color: '#38bdf8', size: 26, life: 1.5 });
+                this.fx.ring(midX, midY, 65, '#38bdf8', 0.5, 4);
+                this.fx.stars(midX, midY - 10, 9, ['#38bdf8', '#ffd23f', '#ffffff']);
+                this.sfx.multi(Math.min(5, this.coopCatchCombo + 1));
+            }
+            this.lastCatcher = pNum;
+        }
 
         let mult = 1;
         if (isP) {
@@ -685,6 +1053,9 @@ class Game {
         const x2 = this.buffs.x2 > 0 ? 2 : 1;
         const reward = Math.max(1, Math.round(pig.reward * this.coinMult * mult * x2 * this.eventMul));
         this.addCoins(reward);
+        if (pNum === 1) this.dayCoinsP1 += reward;
+        else if (pNum === 2) this.dayCoinsP2 += reward;
+
         st.totalPigs++;
         if (pig.def.gold) st.goldCaught++;
         if (pig.def.ninja) st.ninjaCaught++;
@@ -706,11 +1077,95 @@ class Game {
             this.fx.text(pig.x, pig.y - 70, 'БОСС ПОВЕРЖЕН!', { color: '#ffd23f', size: 34, life: 1.6 });
         }
         this.checkAch();
+
+        if (this.isOnline && this.network && this.netRole === 'host') {
+            this.network.broadcastEvent('PIG_CAUGHT', {
+                catcher: pNum,
+                reward,
+                combo: this.combo,
+                coopCombo: this.coopCatchCombo
+            });
+        }
+    }
+
+    /* ================= Кооперативные механики ================= */
+    /** Зажатие свиней/кабанов/босса в клещи двумя игроками (co-op pin stun) */
+    updateCoopPinning(dt) {
+        if (this.mode !== 'coop' || !this.player || !this.player2) return;
+        if (this.state !== 'play') return;
+        const p1 = this.player, p2 = this.player2;
+        if (p1.stun > 0 || p2.stun > 0) return;
+
+        for (const pig of this.pigs) {
+            if (!pig.active || pig.inBarn || pig.state === 'escape' || pig.state === 'burst') continue;
+            const isTough = pig.def.charger || pig.def.boss || pig.type === 'big' || pig.type === 'boss';
+            if (!isTough) continue;
+            if (pig.coopPinCd > 0) pig.coopPinCd -= dt;
+
+            const pinRange = pig.r + 58;
+            const d1 = U.dist(p1.x, p1.y, pig.x, pig.y);
+            const d2 = U.dist(p2.x, p2.y, pig.x, pig.y);
+
+            if (d1 <= pinRange && d2 <= pinRange) {
+                const v1x = (p1.x - pig.x) / (d1 || 1);
+                const v1y = (p1.y - pig.y) / (d1 || 1);
+                const v2x = (p2.x - pig.x) / (d2 || 1);
+                const v2y = (p2.y - pig.y) / (d2 || 1);
+                const dot = v1x * v2x + v1y * v2y;
+
+                // Если игроки окружают с разных сторон (угол между векторами > ~75°)
+                if (dot < 0.25 && (pig.coopPinCd || 0) <= 0) {
+                    pig.coopPinCd = 4.0;
+                    pig.state = 'dizzy';
+                    pig.stateT = 3.0;
+                    pig.vx = 0; pig.vy = 0;
+                    if (pig.chargeCd !== undefined) pig.chargeCd = Math.max(pig.chargeCd, 3.5);
+
+                    this.sfx.hit();
+                    this.fx.addShake(12);
+                    this.fx.addFlash('#fef08a', 0.2);
+                    this.fx.text(pig.x, pig.y - pig.r - 28, '🤝 ЗАЖАТ В КЛЕЩИ! ОГЛУШЁН!', { color: '#facc15', size: 24, life: 1.8 });
+                    this.fx.stars(pig.x, pig.y - pig.r, 14, ['#38bdf8', '#facc15', '#ffffff']);
+                    this.fx.ring(pig.x, pig.y, pig.r + 30, '#38bdf8', 0.5, 5);
+                    this.fx.ring(pig.x, pig.y, pig.r + 45, '#facc15', 0.6, 3);
+
+                    if (this.isOnline && this.network) {
+                        this.network.broadcastEvent('COOP_PIN', { x: pig.x, y: pig.y - pig.r });
+                    }
+                }
+            }
+        }
+    }
+
+    /** Выручка оглушенного напарника при сближении */
+    updateCoopPartnerAssist() {
+        if (this.mode !== 'coop' || !this.player || !this.player2) return;
+        const p1 = this.player, p2 = this.player2;
+        const dist = U.dist(p1.x, p1.y, p2.x, p2.y);
+        if (dist < 46) {
+            if (p1.stun > 0 && p2.stun <= 0) {
+                p1.stun = 0;
+                this.fx.text(p1.x, p1.y - 32, 'НАПАРНИК ВЫРУЧИЛ! 🤝', { color: '#4ade80', size: 22, life: 1.2 });
+                this.fx.stars(p1.x, p1.y - 15, 6, ['#4ade80', '#ffffff']);
+                this.sfx.powerup();
+                if (this.isOnline && this.network) {
+                    this.network.broadcastEvent('ASSIST', { x: p1.x, y: p1.y });
+                }
+            } else if (p2.stun > 0 && p1.stun <= 0) {
+                p2.stun = 0;
+                this.fx.text(p2.x, p2.y - 32, 'НАПАРНИК ВЫРУЧИЛ! 🤝', { color: '#4ade80', size: 22, life: 1.2 });
+                this.fx.stars(p2.x, p2.y - 15, 6, ['#4ade80', '#ffffff']);
+                this.sfx.powerup();
+                if (this.isOnline && this.network) {
+                    this.network.broadcastEvent('ASSIST', { x: p2.x, y: p2.y });
+                }
+            }
+        }
     }
 
     /* ================= Бонусы ================= */
-    pickPowerup(u) {
-        const def = POWERUPS[u.id], p = this.player;
+    pickPowerup(u, picker) {
+        const def = POWERUPS[u.id], p = picker || this.player;
         if (u.id === 'speed' || u.id === 'net' || u.id === 'x2') this.buffs[u.id] = def.time;
         else if (u.id === 'carrot') this.lureT = def.time;
         else if (u.id === 'freeze') { for (const pig of this.pigs) if (pig.active && pig.state !== 'escape') pig.frozen = def.time; }
@@ -770,6 +1225,9 @@ class Game {
         this.checkQuestAtWin();
         this.sfx.win();
         this.fx.confetti(this.player.x, this.player.y - 30, 60);
+        if (this.mode === 'coop' && this.player2) {
+            this.fx.confetti(this.player2.x, this.player2.y - 30, 60);
+        }
         this.fx.addFlash('#fff6c0', 0.3);
         this.ui.banner('Все свиньи пойманы!', '', 1500);
         for (const p of this.pigs) if (p.active && p.state !== 'escape') p.beginEscape(this.world);
@@ -800,7 +1258,19 @@ class Game {
 
         const lines = [];
         lines.push({ label: 'Свиней поймано', value: caught + ' из ' + total });
-        lines.push({ label: 'Монеты за свиней', value: '+' + this.dayCoins + ' 🪙' });
+        if (this.mode === 'coop') {
+            const p1Label = this.isOnline ? '  🧑‍🌾 Хост (Амбар 1)' : '  🧑‍🌾 Игрок 1 (WASD)';
+            const p2Label = this.isOnline ? '  👩‍🌾 Гость (Амбар 2)' : '  👩‍🌾 Игрок 2 (Стрелки)';
+            lines.push({ label: p1Label, value: this.dayCaughtP1 + ' шт.' });
+            lines.push({ label: p2Label, value: this.dayCaughtP2 + ' шт.' });
+            if (this.coopCatchCombo > 0) {
+                lines.push({ label: '  🤝 Кооп-комбо', value: 'x' + this.coopCatchCombo });
+            }
+            lines.push({ label: 'Командный улов', value: '+' + this.dayCoins + ' 🪙' });
+        } else {
+            lines.push({ label: 'Монеты за свиней', value: '+' + this.dayCoins + ' 🪙' });
+        }
+
         let earned = this.dayCoins;
         if (!failed) {
             const starB = stars * (2 + Math.floor(day / 2));
@@ -829,7 +1299,11 @@ class Game {
         this.ui.showResult({
             day, stars, failed, caught, total, escaped: Math.max(0, total - caught), lines, earned,
             quest: q ? { text: q.text, done: !!q.done, reward: q.reward } : null,
-            bestCombo: this.dayBestCombo, canPrestige: this.canPrestige()
+            bestCombo: this.dayBestCombo, canPrestige: this.canPrestige(),
+            mode: this.mode,
+            p1Caught: this.dayCaughtP1,
+            p2Caught: this.dayCaughtP2,
+            coopCombo: this.coopCatchCombo
         });
     }
 
@@ -838,7 +1312,8 @@ class Game {
 
     update(rdt) {
         this.time += rdt;
-        this.swingBuf = Math.max(0, this.swingBuf - rdt);
+        this.swingBuf1 = Math.max(0, this.swingBuf1 - rdt);
+        this.swingBuf2 = Math.max(0, this.swingBuf2 - rdt);
         this.frozenNow = this.paused || (this.ui.modalOpen && this.isActiveState());
         if (this.frozenNow) return;
 
@@ -849,7 +1324,7 @@ class Game {
             dt = rdt * this.timeScale;
         }
 
-        const w = this.world, p = this.player, st = this.state;
+        const w = this.world, p = this.player, p2 = this.player2, st = this.state;
         if (st === 'title') this.titleT += rdt;
 
         // Состояния
@@ -864,19 +1339,41 @@ class Game {
 
         w.update(dt);
 
-        // Игрок
-        const mv = this.moveVector();
+        // Игрок 1
+        const mv1 = this.moveVector(1);
         const px0 = p.x, py0 = p.y;
-        p.update(dt, this, mv.x, mv.y);
+        p.update(dt, this, mv1.x, mv1.y);
         if (this.tutStep === 0 && playing) {
             this.tutMove += Math.hypot(p.x - px0, p.y - py0);
             if (this.tutMove > 140) this.tutStep = 1;
         }
 
-        // Взмах (удержание = автоповтор)
+        // Игрок 2 (в кооп-режиме)
+        if (this.mode === 'coop' && p2) {
+            const mv2 = this.moveVector(2);
+            p2.update(dt, this, mv2.x, mv2.y);
+        }
+
+        // Взмахи сачком
         if (playing && this.inputAllowed()) {
-            const want = this.swingBuf > 0 || this.keys.space || this.mouseDown || this.input.swingHeld;
-            if (want && p.canSwing()) { this.doSwing(); this.swingBuf = 0; }
+            if (this.isOnline && this.netRole === 'guest') {
+                const want2 = this.swingBuf2 > 0 || this.swingBuf1 > 0 || this.keys.space || this.keys.enter || this.mouseDown || this.input.swingHeld;
+                if (want2 && p2 && p2.canSwing()) { this.doSwing(2); this.swingBuf1 = 0; this.swingBuf2 = 0; }
+            } else {
+                const want1 = this.swingBuf1 > 0 || this.keys.space || this.mouseDown || this.input.swingHeld;
+                if (want1 && p.canSwing()) { this.doSwing(1); this.swingBuf1 = 0; }
+
+                if (this.mode === 'coop' && p2 && !this.isOnline) {
+                    const want2 = this.swingBuf2 > 0 || this.keys.enter;
+                    if (want2 && p2.canSwing()) { this.doSwing(2); this.swingBuf2 = 0; }
+                }
+            }
+        }
+
+        // Кооп-взаимодействия (клещи и выручка)
+        if (this.mode === 'coop' && p2) {
+            this.updateCoopPinning(dt);
+            this.updateCoopPartnerAssist();
         }
 
         for (const h of this.helpers) h.update(dt, this);
@@ -894,15 +1391,24 @@ class Game {
         this.threats.length = 0;
         if (this.state !== 'title' && this.state !== 'result') {
             this.threats.push({ x: p.x, y: p.y, k: 1 });
+            if (this.mode === 'coop' && p2) {
+                this.threats.push({ x: p2.x, y: p2.y, k: 1 });
+            }
             for (const h of this.helpers) this.threats.push({ x: h.x, y: h.y, k: 0.7 });
         }
-        this.reach = p.catchRadius * (this.buffs.net > 0 ? 1.8 : 1);
-        let inReach = false;
+
+        this.reach = this.reachFor(p);
+        this.reach2 = p2 ? this.reachFor(p2) : CONFIG.CATCH_RADIUS;
+
+        let inReach1 = false, inReach2 = false;
         for (const pig of this.pigs) {
             if (!pig.active || pig.state === 'burst' || pig.state === 'escape') continue;
-            if (U.dist(p.x, p.y, pig.x, pig.y) <= this.reach + pig.r * 0.6) { inReach = true; break; }
+            if (!inReach1 && U.dist(p.x, p.y, pig.x, pig.y) <= this.reach + pig.r * 0.6) inReach1 = true;
+            if (p2 && !inReach2 && U.dist(p2.x, p2.y, pig.x, pig.y) <= this.reach2 + pig.r * 0.6) inReach2 = true;
+            if (inReach1 && (inReach2 || !p2)) break;
         }
-        this.pigInReach = inReach;
+        this.pigInReach = inReach1;
+        this.pigInReach2 = inReach2;
 
         // Бафы и комбо
         for (const k of ['speed', 'net', 'x2']) if (this.buffs[k] > 0) this.buffs[k] = Math.max(0, this.buffs[k] - dt);
@@ -937,7 +1443,15 @@ class Game {
             this.ui.updateHud({
                 day: this.day, caught: this.dayCaught, total: this.total, coins: Math.round(this.shownCoins),
                 timeLeft: Math.max(0, this.timeLeft), timeTotal: this.timeTotal,
-                seasonIcon: w.season.icon, eventIcon: this.event ? EVENTS[this.event].icon : ''
+                seasonIcon: w.season.icon, eventIcon: this.event ? EVENTS[this.event].icon : '',
+                mode: this.mode,
+                p1Caught: this.dayCaughtP1,
+                p2Caught: this.dayCaughtP2,
+                p1Coins: this.dayCoinsP1,
+                p2Coins: this.dayCoinsP2,
+                p1DashReady: this.player ? this.player.dashCdT <= 0 : true,
+                p2DashReady: (this.mode === 'coop' && this.player2) ? this.player2.dashCdT <= 0 : true,
+                coopCombo: this.coopCatchCombo
             });
         }
     }
@@ -972,12 +1486,18 @@ class Game {
             if (this.powerups.length < CONFIG.POWERUP_MAX) this.spawnPowerup();
             this.powerupT = CONFIG.POWERUP_INTERVAL / this.luck * U.rand(0.7, 1.3);
         }
-        const p = this.player;
+        const p1 = this.player, p2 = this.player2;
         for (let i = this.powerups.length - 1; i >= 0; i--) {
             const u = this.powerups[i];
             u.life -= dt;
             if (u.life <= 0) { this.powerups.splice(i, 1); continue; }
-            if (U.dist(p.x, p.y, u.x, u.y) < 36) { this.powerups.splice(i, 1); this.pickPowerup(u); }
+            const d1 = U.dist(p1.x, p1.y, u.x, u.y);
+            const d2 = (this.mode === 'coop' && p2) ? U.dist(p2.x, p2.y, u.x, u.y) : Infinity;
+            if (d1 < 36) {
+                this.powerups.splice(i, 1); this.pickPowerup(u, p1);
+            } else if (d2 < 36) {
+                this.powerups.splice(i, 1); this.pickPowerup(u, p2);
+            }
         }
 
         // Тик и темп музыки
@@ -1016,16 +1536,70 @@ class Game {
         }
     }
 
+    /* ================= Динамическая камера ================= */
     updateCamera(rdt) {
-        const p = this.player, w = this.world;
+        const p = this.player, p2 = this.player2, w = this.world;
         let tx, ty;
+
         if (this.state === 'title') {
             const b = w.barn, t = this.titleT;
             tx = b.x + Math.cos(t * 0.12) * 260; ty = b.y - 20 + Math.sin(t * 0.17) * 120;
+            this.zoom = this.baseZoom;
+            this.vw = this.w / this.zoom;
+            this.vh = this.h / this.zoom;
+        } else if (this.isOnline) {
+            // Онлайн-мультиплеер на 2 устройства: у каждого игрока своя камера на своём экране
+            const targetP = (this.netRole === 'guest' && p2) ? p2 : p;
+            this.zoom = this.baseZoom;
+            this.vw = this.w / this.zoom;
+            this.vh = this.h / this.zoom;
+            tx = targetP.x + U.clamp(targetP.vx * 0.28, -110, 110);
+            ty = targetP.y - 20 + U.clamp(targetP.vy * 0.28, -80, 80);
+        } else if (this.mode === 'coop' && p2) {
+            // Динамическая камера между Игроком 1 и Игроком 2 (локальный кооп на одном экране)
+            const midX = (p.x + p2.x) / 2;
+            const midY = (p.y + p2.y) / 2;
+            const dx = Math.abs(p.x - p2.x);
+            const dy = Math.abs(p.y - p2.y);
+
+            // Динамическое масштабирование, чтобы оба игрока всегда были в кадре
+            const padX = 260, padY = 220;
+            const neededZoomX = this.w / (dx + padX);
+            const neededZoomY = this.h / (dy + padY);
+            const targetZoom = U.clamp(Math.min(neededZoomX, neededZoomY, this.baseZoom), 0.48, this.baseZoom);
+            const kZoom = 1 - Math.exp(-rdt * 3.5);
+            this.zoom += (targetZoom - this.zoom) * kZoom;
+            this.vw = this.w / this.zoom;
+            this.vh = this.h / this.zoom;
+
+            const avgVx = (p.vx + p2.vx) / 2;
+            const avgVy = (p.vy + p2.vy) / 2;
+            tx = midX + U.clamp(avgVx * 0.22, -100, 100);
+            ty = midY - 20 + U.clamp(avgVy * 0.22, -70, 70);
+
+            // Мягкое удержание игроков в пределах видимой зоны
+            const maxSepX = this.vw * 0.94;
+            const maxSepY = this.vh * 0.94;
+            const curDx = p2.x - p.x;
+            const curDy = p2.y - p.y;
+            if (Math.abs(curDx) > maxSepX) {
+                const excess = (Math.abs(curDx) - maxSepX) * 0.5;
+                if (curDx > 0) { p.x += excess * 0.5; p2.x -= excess * 0.5; }
+                else { p.x -= excess * 0.5; p2.x += excess * 0.5; }
+            }
+            if (Math.abs(curDy) > maxSepY) {
+                const excess = (Math.abs(curDy) - maxSepY) * 0.5;
+                if (curDy > 0) { p.y += excess * 0.5; p2.y -= excess * 0.5; }
+                else { p.y -= excess * 0.5; p2.y += excess * 0.5; }
+            }
         } else {
+            this.zoom = this.baseZoom;
+            this.vw = this.w / this.zoom;
+            this.vh = this.h / this.zoom;
             tx = p.x + U.clamp(p.vx * 0.28, -110, 110);
             ty = p.y - 20 + U.clamp(p.vy * 0.28, -80, 80);
         }
+
         const k = 1 - Math.exp(-rdt * (this.state === 'title' ? 1.5 : 5));
         this.camCX += (tx - this.camCX) * k;
         this.camCY += (ty - this.camCY) * k;
@@ -1080,7 +1654,7 @@ class Game {
     /* ================= Отрисовка ================= */
     render() {
         const ctx = this.ctx, dpr = this.dpr, zoom = this.zoom;
-        const w = this.w, h = this.h, world = this.world, fx = this.fx, p = this.player;
+        const w = this.w, h = this.h, world = this.world, fx = this.fx, p = this.player, p2 = this.player2;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.fillStyle = '#1d3a22';
         ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -1093,7 +1667,7 @@ class Game {
 
         world.drawGround(ctx, camX, camY, vw, vh);
 
-        // Общий список по глубине
+        // Общий список объектов по глубине Y
         const items = [];
         const x0 = camX - 140, x1 = camX + vw + 140, y0 = camY - 30, y1 = camY + vh + 190;
         for (const pr of world.props) {
@@ -1106,10 +1680,30 @@ class Game {
             items.push({ y: pig.y, k: 1, o: pig });
         }
         items.push({ y: p.y, k: 2, o: p });
+        if (this.mode === 'coop' && p2) {
+            items.push({ y: p2.y, k: 6, o: p2 });
+        }
         for (const hp of this.helpers) items.push({ y: hp.y, k: 3, o: hp });
         for (const dg of this.dogs) items.push({ y: dg.y, k: 4, o: dg });
         for (const u of this.powerups) items.push({ y: u.y, k: 5, o: u });
         items.sort((a, b) => a.y - b.y);
+
+        // Совместная связка в кооп-режиме (линия взаимодействия при сближении)
+        if (this.mode === 'coop' && p2 && this.state !== 'title' && this.state !== 'result') {
+            const distP = U.dist(p.x, p.y, p2.x, p2.y);
+            if (distP < 140) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+                ctx.lineWidth = 3;
+                ctx.setLineDash([7, 6]);
+                ctx.lineDashOffset = -this.time * 20;
+                ctx.beginPath();
+                ctx.moveTo(p.x, p.y + 4);
+                ctx.lineTo(p2.x, p2.y + 4);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
 
         const showInfo = this.state !== 'title';
         const barnInfo = '🐷 ' + this.dayCaught + '/' + this.total;
@@ -1117,12 +1711,24 @@ class Game {
             switch (it.k) {
                 case 0: world.drawProp(ctx, it.o, p, (it.o === world.barn && showInfo) ? barnInfo : undefined); break;
                 case 1: it.o.draw(ctx, this); break;
-                case 2: p.draw(ctx, this); break;
+                case 2:
+                    this.reach = this.reachFor(p);
+                    this.pigInReach = this.pigInReach;
+                    p.draw(ctx, this);
+                    break;
                 case 3: case 4: it.o.draw(ctx, this); break;
                 case 5: this.drawPowerup(ctx, it.o); break;
+                case 6:
+                    this.reach = this.reachFor(it.o);
+                    this.pigInReach = this.pigInReach2;
+                    it.o.draw(ctx, this);
+                    break;
                 default: break;
             }
         }
+        // Восстановление reach Игрока 1 по умолчанию
+        this.reach = this.reachFor(p);
+
         // Летящие пойманные свиньи поверх
         for (const pig of this.pigs) if (pig.caught && !pig.inBarn) pig.draw(ctx, this);
 
@@ -1209,17 +1815,35 @@ class Game {
     }
 
     drawNight(ctx, w, h) {
-        const p = this.player, z = this.zoom;
+        const p = this.player, p2 = this.player2, z = this.zoom;
         const px = (p.x - this.camX) * z, py = (p.y - 10 - this.camY) * z;
-        const g = ctx.createRadialGradient(px, py, 70 * z, px, py, 310 * z);
-        g.addColorStop(0, 'rgba(6,10,34,0)');
-        g.addColorStop(1, 'rgba(6,10,34,0.8)');
-        ctx.fillStyle = g;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(6,10,34,0.82)';
         ctx.fillRect(0, 0, w, h);
+
+        // Маска освещения вокруг игроков
+        ctx.globalCompositeOperation = 'destination-out';
+
+        const g1 = ctx.createRadialGradient(px, py, 60 * z, px, py, 290 * z);
+        g1.addColorStop(0, 'rgba(0,0,0,1)');
+        g1.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g1;
+        ctx.fillRect(px - 300 * z, py - 300 * z, 600 * z, 600 * z);
+
+        if (this.mode === 'coop' && p2) {
+            const p2x = (p2.x - this.camX) * z, p2y = (p2.y - 10 - this.camY) * z;
+            const g2 = ctx.createRadialGradient(p2x, p2y, 60 * z, p2x, p2y, 290 * z);
+            g2.addColorStop(0, 'rgba(0,0,0,1)');
+            g2.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = g2;
+            ctx.fillRect(p2x - 300 * z, p2y - 300 * z, 600 * z, 600 * z);
+        }
+        ctx.restore();
     }
 
     drawHud(ctx, w, h) {
-        const z = this.zoom, world = this.world, p = this.player;
+        const z = this.zoom, world = this.world, p = this.player, p2 = this.player2;
         const toS = (x, y) => ({ x: (x - this.camX) * z, y: (y - this.camY) * z });
 
         // --- Стрелки на свиней за экраном ---
@@ -1258,7 +1882,9 @@ class Game {
         ctx.beginPath(); ctx.roundRect(mx - 3, my - 3, mw + 6, mh + 6, 8); ctx.fill(); ctx.stroke();
         const b = world.barn;
         ctx.fillStyle = '#d23f36'; ctx.fillRect(mx + (b.x - b.w / 2) * sc, my + (b.y - b.h) * sc, b.w * sc, b.h * sc);
-        ctx.fillStyle = '#2a8fd0'; ctx.beginPath(); ctx.ellipse(mx + world.pond.x * sc, my + world.pond.y * sc, world.pond.rx * sc, world.pond.ry * sc, 0, 0, Math.PI * 2); ctx.fill();
+        if (world.pond) {
+            ctx.fillStyle = '#2a8fd0'; ctx.beginPath(); ctx.ellipse(mx + world.pond.x * sc, my + world.pond.y * sc, world.pond.rx * sc, world.pond.ry * sc, 0, 0, Math.PI * 2); ctx.fill();
+        }
         ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1;
         ctx.strokeRect(mx + this.camX * sc, my + this.camY * sc, this.vw * sc, this.vh * sc);
         for (const u of this.powerups) { ctx.fillStyle = POWERUPS[u.id].color; ctx.beginPath(); ctx.arc(mx + u.x * sc, my + u.y * sc, 3, 0, Math.PI * 2); ctx.fill(); }
@@ -1268,8 +1894,16 @@ class Game {
             ctx.beginPath(); ctx.arc(mx + pig.x * sc, my + pig.y * sc, pig.def.charger ? 3.8 : 2.6, 0, Math.PI * 2); ctx.fill();
         }
         for (const hp of this.helpers) { ctx.fillStyle = '#6ee787'; ctx.beginPath(); ctx.arc(mx + hp.x * sc, my + hp.y * sc, 2.8, 0, Math.PI * 2); ctx.fill(); }
-        ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#1d4ed8'; ctx.lineWidth = 2;
+
+        // Игрок 1 на миникарте (синий)
+        ctx.fillStyle = '#3b82f6'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(mx + p.x * sc, my + p.y * sc, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+        // Игрок 2 на миникарте (бирюзовый/розовый)
+        if (this.mode === 'coop' && p2) {
+            ctx.fillStyle = '#06b6d4'; ctx.strokeStyle = '#f43f5e'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(mx + p2.x * sc, my + p2.y * sc, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
         ctx.restore();
 
         // --- Задание дня ---
@@ -1315,7 +1949,7 @@ class Game {
         });
 
         // --- Полоса босса ---
-        const boss = this.pigs.find((pg) => pg.def.boss && pg.active);
+        const boss = this.pigs.find((pg) => pg.def && pg.def.boss && pg.active);
         if (boss) {
             const bw = Math.min(420, w * 0.6), bx = w / 2 - bw / 2, by = h - 50;
             this.label(ctx, 'Хряк-Босс', w / 2, by - 14, 18, boss.enraged ? '#ff8a8a' : '#ffffff');
@@ -1333,7 +1967,9 @@ class Game {
         if (this.state === 'play' && this.day === 1 && !this.save.tutorial && this.tutStep < 3) {
             const txts = this.touch
                 ? ['Джойстик слева — бежать', 'Кнопка 🕸️ — взмах сачком!', 'Кнопка 💨 — рывок!']
-                : ['WASD — бежать', 'ПРОБЕЛ / клик — взмах сачком!', 'SHIFT — рывок!'];
+                : (this.mode === 'coop'
+                    ? ['P1: WASD / P2: Стрелки — бежать', 'P1: ПРОБЕЛ / P2: ENTER — взмах сачком!', 'P1: LSHIFT / P2: RSHIFT — рывок!']
+                    : ['WASD — бежать', 'ПРОБЕЛ / клик — взмах сачком!', 'SHIFT — рывок!']);
             const str = txts[this.tutStep];
             const s = toS(p.x, p.y);
             const by = s.y - 78 * z - 8 + Math.sin(this.time * 4) * 3;
@@ -1344,6 +1980,257 @@ class Game {
             ctx.beginPath(); ctx.roundRect(bx - tw / 2, by - 17, tw, 34, 12); ctx.fill(); ctx.stroke();
             ctx.fillStyle = '#5b3a1e'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillText(str, bx, by + 1);
+        }
+    }
+
+    /* ================= Сетевой режим (WebRTC P2P на 2 устройства) ================= */
+    hostOnlineGame(customCode) {
+        if (!this.network) return false;
+        this.setMode('coop');
+        return this.network.hostRoom(customCode);
+    }
+
+    joinOnlineGame(code) {
+        if (!this.network) return false;
+        this.setMode('coop');
+        return this.network.joinRoom(code);
+    }
+
+    startOnlineGame(role, initPacket = null) {
+        this.isOnline = true;
+        this.netRole = role; // 'host' or 'guest'
+        this.setMode('coop');
+
+        if (role === 'guest' && initPacket) {
+            this.day = initPacket.day || this.day;
+            const tier = initPacket.tier !== undefined ? initPacket.tier : tierForDay(this.day);
+            const seasonIdx = initPacket.seasonIdx !== undefined ? initPacket.seasonIdx : seasonForDay(this.day);
+            const coopMapIdx = initPacket.coopMapIdx || 0;
+            this.world = new World(tier, seasonIdx, 'coop', coopMapIdx);
+            this.world.mode = 'coop';
+            this.initPlayers();
+            this.resetPlayerAtGate();
+            this.recalc();
+        }
+
+        if (this.ui) {
+            this.ui.closeOnlineModal();
+            this.ui.hideTitle();
+            this.ui.setHud(true);
+            const roleName = role === 'host' ? 'P1 Хост (Амбар 1)' : 'P2 Гость (Амбар 2)';
+            const roomCode = (this.network && this.network.roomCode) || '';
+            this.ui.setOnlineHudStatus(true, roleName, roomCode);
+            this.ui.toast('🌐', 'Онлайн-игра началась!', role === 'host' ? 'Вы управляете Красным амбаром (P1)' : 'Вы управляете Бирюзовым амбаром (P2)');
+        }
+
+        if (role === 'host') {
+            this.startDay(this.day);
+        } else {
+            this.state = 'play';
+        }
+    }
+
+    createNetworkSnapshot() {
+        if (!this.world || !this.player) return null;
+        const packedPigs = [];
+        for (let i = 0; i < this.pigs.length; i++) {
+            const pg = this.pigs[i];
+            if (pg.inBarn || pg.gone) continue;
+            packedPigs.push({
+                i,
+                t: pg.type,
+                x: Math.round(pg.x * 10) / 10,
+                y: Math.round(pg.y * 10) / 10,
+                vx: Math.round(pg.vx),
+                vy: Math.round(pg.vy),
+                f: pg.facing,
+                s: pg.state,
+                c: pg.caught ? 1 : 0,
+                hp: pg.hp,
+                mhp: pg.maxHp,
+                enr: pg.enraged ? 1 : 0,
+                spr: pg.isSprinting ? 1 : 0,
+                tx: pg.tx !== undefined ? Math.round(pg.tx) : undefined,
+                ty: pg.ty !== undefined ? Math.round(pg.ty) : undefined,
+                ft: pg.flyT !== undefined ? Math.round(pg.flyT * 100) / 100 : undefined
+            });
+        }
+
+        const packedPowerups = [];
+        for (let i = 0; i < this.powerups.length; i++) {
+            const u = this.powerups[i];
+            packedPowerups.push({
+                id: u.id,
+                x: Math.round(u.x),
+                y: Math.round(u.y),
+                l: Math.round(u.life)
+            });
+        }
+
+        return {
+            day: this.day,
+            st: this.state,
+            tl: Math.round(this.timeLeft * 10) / 10,
+            tt: Math.round(this.timeTotal),
+            c: Math.round(this.shownCoins),
+            cb: this.combo,
+            cbt: Math.round(this.comboT * 10) / 10,
+            cc: this.coopCatchCombo,
+            dc: this.dayCaught,
+            tot: this.total,
+            p1c: this.dayCaughtP1,
+            p2c: this.dayCaughtP2,
+            p1m: this.dayCoinsP1,
+            p2m: this.dayCoinsP2,
+            b1o: Math.round((this.world.barnOpen || 0) * 100) / 100,
+            b2o: Math.round((this.world.barn2Open || 0) * 100) / 100,
+            p1: this.player ? this.player.getNetworkState() : null,
+            pigs: packedPigs,
+            pu: packedPowerups,
+            bf: {
+                spd: Math.round(this.buffs.speed),
+                net: Math.round(this.buffs.net),
+                x2: Math.round(this.buffs.x2)
+            }
+        };
+    }
+
+    receiveHostState(pkt) {
+        if (!pkt) return;
+        this.day = pkt.day ?? this.day;
+        this.timeLeft = pkt.tl ?? this.timeLeft;
+        this.timeTotal = pkt.tt ?? this.timeTotal;
+        if (pkt.st && this.state !== pkt.st) {
+            this.state = pkt.st;
+            if (pkt.st === 'result' && this.ui) {
+                this.finishDay();
+            }
+        }
+        this.shownCoins = pkt.c ?? this.shownCoins;
+        this.combo = pkt.cb ?? this.combo;
+        this.comboT = pkt.cbt ?? this.comboT;
+        this.coopCatchCombo = pkt.cc ?? this.coopCatchCombo;
+        this.dayCaught = pkt.dc ?? this.dayCaught;
+        this.total = pkt.tot ?? this.total;
+        this.dayCaughtP1 = pkt.p1c ?? this.dayCaughtP1;
+        this.dayCaughtP2 = pkt.p2c ?? this.dayCaughtP2;
+        this.dayCoinsP1 = pkt.p1m ?? this.dayCoinsP1;
+        this.dayCoinsP2 = pkt.p2m ?? this.dayCoinsP2;
+
+        if (this.world) {
+            if (pkt.b1o !== undefined) this.world._barnOpen = pkt.b1o;
+            if (pkt.b2o !== undefined) this.world._barn2Open = pkt.b2o;
+        }
+
+        if (pkt.p1 && this.player) {
+            this.player.applyNetworkState(pkt.p1);
+        }
+
+        if (pkt.pigs && Array.isArray(pkt.pigs)) {
+            for (const sp of pkt.pigs) {
+                let pig = this.pigs.find(p => p._netIdx === sp.i || (p.type === sp.t && Math.hypot(p.x - sp.x, p.y - sp.y) < 120));
+                if (!pig) {
+                    pig = new Pig(sp.t, sp.x, sp.y, this.day);
+                    pig._netIdx = sp.i;
+                    this.pigs.push(pig);
+                }
+                pig._netIdx = sp.i;
+                pig.x = sp.x;
+                pig.y = sp.y;
+                pig.vx = sp.vx;
+                pig.vy = sp.vy;
+                pig.facing = sp.f;
+                pig.state = sp.s;
+                pig.hp = sp.hp;
+                pig.maxHp = sp.mhp;
+                pig.enraged = !!sp.enr;
+                pig.isSprinting = !!sp.spr;
+
+                if (sp.c && !pig.caught) {
+                    const door = (this.world && this.world.door2) ? this.world.door2 : (this.world ? this.world.door : { x: 400, y: 300 });
+                    pig.catchTo(sp.tx || door.x, sp.ty || door.y);
+                }
+                if (sp.ft !== undefined) pig.flyT = sp.ft;
+            }
+        }
+
+        if (pkt.pu && Array.isArray(pkt.pu)) {
+            this.powerups = pkt.pu.map(u => ({ id: u.id, x: u.x, y: u.y, life: u.l, seed: 1 }));
+        }
+
+        if (pkt.bf) {
+            this.buffs.speed = pkt.bf.spd || 0;
+            this.buffs.net = pkt.bf.net || 0;
+            this.buffs.x2 = pkt.bf.x2 || 0;
+        }
+    }
+
+    receiveGuestInput(pkt) {
+        if (!this.player2 || !pkt) return;
+        this.player2.applyNetworkState(pkt);
+        if (pkt.swingBuf && this.player2.canSwing()) {
+            this.doSwing(2);
+        }
+    }
+
+    receiveNetEvent(event, payload) {
+        if (!event) return;
+        switch (event) {
+            case 'PLAYER_SWING': {
+                const target = payload.p === 2 ? this.player2 : this.player;
+                if (target) {
+                    target.swing(payload.miss);
+                    this.sfx.swing();
+                }
+                break;
+            }
+            case 'PLAYER_DASH': {
+                const target = payload.p === 2 ? this.player2 : this.player;
+                if (target) {
+                    target.startDash(payload.vx, payload.vy);
+                    this.sfx.dash();
+                    this.fx.dust(target.x, target.y + 14, 5, this.dustColor);
+                }
+                break;
+            }
+            case 'PIG_CAUGHT': {
+                this.sfx.catch(payload.combo || 1);
+                if (payload.coopCombo > 1) {
+                    this.sfx.multi(Math.min(5, payload.coopCombo));
+                }
+                break;
+            }
+            case 'COOP_PIN': {
+                this.sfx.hit();
+                this.fx.addShake(12);
+                this.fx.addFlash('#fef08a', 0.2);
+                this.fx.text(payload.x, payload.y - 28, '🤝 ЗАЖАТ В КЛЕЩИ! ОГЛУШЁН!', { color: '#facc15', size: 24, life: 1.8 });
+                break;
+            }
+            case 'ASSIST': {
+                this.sfx.powerup();
+                this.fx.text(payload.x, payload.y - 32, 'НАПАРНИК ВЫРУЧИЛ! 🤝', { color: '#4ade80', size: 22, life: 1.2 });
+                break;
+            }
+            case 'NEXT_DAY': {
+                if (this.ui) this.ui.hideResult();
+                this.startDay(payload.day || (this.day + 1));
+                break;
+            }
+            case 'RETRY_DAY': {
+                if (this.ui) this.ui.hideResult();
+                this.startDay(payload.day || this.day);
+                break;
+            }
+        }
+    }
+
+    onOnlinePartnerDisconnected(reason) {
+        this.isOnline = false;
+        this.netRole = null;
+        if (this.ui) {
+            this.ui.setOnlineHudStatus(false);
+            this.ui.toast('⚠️', 'Связь потеряна', reason || 'Напарник покинул игру');
         }
     }
 }

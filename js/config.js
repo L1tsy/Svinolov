@@ -74,6 +74,8 @@ const CONFIG = {
 
     PRESTIGE_DAY: 20,
     PRESTIGE_BONUS: 0.5,
+    PRESTIGE_START_BASE: 50,
+    PRESTIGE_START_STEP: 50,
 
     WORLD_SIZES: [[1500, 1050], [2000, 1350], [2500, 1650]],
     TIER_DAYS: [1, 7, 15],
@@ -123,6 +125,61 @@ const PIG_TYPES = {
     }
 };
 
+/** Стартовый капитал при продаже фермы (престиже) */
+function prestigeStartingCoins(prestige) {
+    const p = Math.max(0, Math.floor(Number(prestige) || 0));
+    return p > 0 ? (CONFIG.PRESTIGE_START_BASE + CONFIG.PRESTIGE_START_STEP * p) : 0;
+}
+CONFIG.prestigeStartingCoins = prestigeStartingCoins;
+
+/* ---------- Прокачка напарников и пса ---------- */
+const HELPER_UPGRADES = [
+    {
+        id: 'helper_speed',
+        icon: '🥾',
+        title: 'Быстрые ноги',
+        desc: 'Напарники бегают быстрее (+15% за ур.)',
+        category: 'team',
+        max: 5,
+        base: 35,
+        growth: 1.6,
+        fx: (l) => `+${l * 15}% к скорости`
+    },
+    {
+        id: 'helper_radius',
+        icon: '🕸️',
+        title: 'Большие сачки',
+        desc: 'Радиус поимки свиней напарниками (+15% за ур.)',
+        category: 'team',
+        max: 5,
+        base: 40,
+        growth: 1.6,
+        fx: (l) => `+${l * 15}% к радиусу сачка`
+    },
+    {
+        id: 'helper_vision',
+        icon: '👀',
+        title: 'Чуткий взор',
+        desc: 'Радиус обнаружения свиней (+25% за ур.) и реакция',
+        category: 'team',
+        max: 4,
+        base: 50,
+        growth: 1.65,
+        fx: (l) => `+${l * 25}% к обзору и реакции`
+    },
+    {
+        id: 'dog_power',
+        icon: '🐕',
+        title: 'Грозный лай',
+        desc: 'Радиус и длительность испуга/замедления свиней от лая Бобика',
+        category: 'team',
+        max: 5,
+        base: 45,
+        growth: 1.6,
+        fx: (l) => `Радиус лая +${l * 20}%, страх +${(l * 0.7).toFixed(1)} с`
+    }
+];
+
 /* ---------- Улучшения ---------- */
 const UPGRADES = [
     { id: 'boots', icon: '🥾', title: 'Сапоги-скороходы', desc: 'Фермер бегает быстрее', max: 10, base: 15, growth: 1.55, fx: (l) => `+${l * 6}% к скорости` },
@@ -132,7 +189,8 @@ const UPGRADES = [
     { id: 'combo', icon: '🔥', title: 'Азарт', desc: 'Комбо не сгорает дольше', max: 6, base: 30, growth: 1.6, fx: (l) => `Комбо держится ${(CONFIG.COMBO_WINDOW + l * 0.5).toFixed(1)} с` },
     { id: 'bank', icon: '🐖', title: 'Свинья-копилка', desc: 'Больше монет за каждую пойманную свинью', max: 12, base: 40, growth: 1.6, fx: (l) => `+${l * 15}% монет` },
     { id: 'clock', icon: '⏰', title: 'Долгий день', desc: 'Солнце садится позже', max: 6, base: 35, growth: 1.6, fx: (l) => `+${l * 6} с к каждому дню` },
-    { id: 'luck', icon: '🍀', title: 'Фермерская удача', desc: 'Бонусы и золотые свиньи появляются чаще', max: 6, base: 45, growth: 1.6, fx: (l) => `+${l * 15}% к удаче` }
+    { id: 'luck', icon: '🍀', title: 'Фермерская удача', desc: 'Бонусы и золотые свиньи появляются чаще', max: 6, base: 45, growth: 1.6, fx: (l) => `+${l * 15}% к удаче` },
+    ...HELPER_UPGRADES
 ];
 
 const TEAM = [

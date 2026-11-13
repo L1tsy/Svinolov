@@ -4,7 +4,7 @@
  * Напарник: сам выбирает свинью, догоняет и машет сачком
  */
 class Helper {
-    constructor(index, x, y) {
+    constructor(index, x, y, game = null) {
         const PAL = [
             { suit: '#2f9e44', hat: '#f08c00' }, { suit: '#7048e8', hat: '#e03131' },
             { suit: '#d9480f', hat: '#2f9e44' }, { suit: '#0c8599', hat: '#f783ac' }
@@ -14,6 +14,7 @@ class Helper {
         this.x = x; this.y = y;
         this.r = 14;
         this.vx = 0; this.vy = 0;
+        this.game = game;
         this.speed = CONFIG.PLAYER_SPEED * 0.84;
         this.catchRadius = CONFIG.CATCH_RADIUS * 0.82;
         this.cd = U.rand(0.3, 1);
@@ -24,6 +25,22 @@ class Helper {
     }
 
     update(dt, g) {
+        if (g) this.game = g;
+        const gObj = this.game || g;
+        const u = (gObj && gObj.storage && gObj.storage.data && gObj.storage.data.upgrades)
+               || (gObj && gObj.save && gObj.save.upgrades)
+               || {};
+
+        const lvlSpeed = Math.max(0, Number(u.helper_speed) || 0);
+        const lvlRadius = Math.max(0, Number(u.helper_radius) || 0);
+        const lvlVision = Math.max(0, Number(u.helper_vision) || 0);
+
+        // Расчет скорости (+15% за уровень, до 5 уровней)
+        this.speed = (CONFIG.PLAYER_SPEED * 0.84) * (1 + 0.15 * lvlSpeed);
+
+        // Расчет радиуса сачка (+15% за уровень, до 5 уровней)
+        this.catchRadius = (CONFIG.CATCH_RADIUS * 0.82) * (1 + 0.15 * lvlRadius);
+
         this.t += dt;
         if (this.cd > 0) this.cd -= dt;
         if (this.swingT > 0) this.swingT -= dt;
@@ -32,8 +49,9 @@ class Helper {
         let tx = 0, ty = 0;
         if (g.state === 'play') {
             if (!this.target || !this.target.active || this.target.state === 'escape' || this.retarget <= 0) {
-                this.target = this.pickTarget(g);
-                this.retarget = 0.7;
+                this.target = this.pickTarget(g, lvlVision);
+                // Чуткий взор повышает реакцию: более частая переоценка целей
+                this.retarget = 0.7 / (1 + 0.25 * lvlVision);
             }
             const p = this.target;
             if (p) {
@@ -46,12 +64,16 @@ class Helper {
                 if (real < this.catchRadius * 0.8 + p.r * 0.5 && this.cd <= 0) {
                     this.swingT = this.swingDur;
                     const res = g.sweep(this, this.catchRadius);
-                    this.cd = res.hits > 0 ? 1.5 : 0.8;
+                    const cdHit = 1.5 / (1 + 0.08 * lvlVision);
+                    const cdMiss = 0.8 / (1 + 0.12 * lvlVision);
+                    this.cd = res.hits > 0 ? cdHit : cdMiss;
                     g.fx.ring(this.x, this.y + 4, this.catchRadius * 0.8, 'rgba(180,255,190,0.8)', 0.25, 4);
                 }
             } else {
-                // Свиней нет — держимся рядом с фермером
-                const dx = g.player.x - this.x, dy = g.player.y - this.y, dd = Math.hypot(dx, dy) || 1;
+                // Свиней нет в радиусе обнаружения — держимся рядом с фермером (в коопе распределяемся между P1 и P2)
+                const p1 = g.player, p2 = (g.player2 && g.player2.active !== false) ? g.player2 : null;
+                const targetPlayer = (p2 && this.index % 2 === 1) ? p2 : p1;
+                const dx = targetPlayer.x - this.x, dy = targetPlayer.y - this.y, dd = Math.hypot(dx, dy) || 1;
                 if (dd > 110 + this.index * 30) { tx = dx / dd; ty = dy / dd; }
             }
         }
@@ -67,11 +89,22 @@ class Helper {
         g.world.resolve(this, this.r);
     }
 
-    pickTarget(g) {
+    pickTarget(g, lvlVision) {
+        if (lvlVision === undefined) {
+            const gObj = this.game || g;
+            const u = (gObj && gObj.storage && gObj.storage.data && gObj.storage.data.upgrades)
+                   || (gObj && gObj.save && gObj.save.upgrades)
+                   || {};
+            lvlVision = Math.max(0, Number(u.helper_vision) || 0);
+        }
+        // Дальность обнаружения: базовая 520 px, +25% за уровень (до 1040 px на 4 ур.)
+        const maxDist = 520 * (1 + 0.25 * lvlVision);
+
         let best = null, bd = Infinity;
         for (const p of g.pigs) {
             if (!p.active || p.state === 'escape' || p.state === 'burst') continue;
             let dd = Math.hypot(p.x - this.x, p.y - this.y);
+            if (dd > maxDist) continue;
             for (const h of g.helpers) if (h !== this && h.target === p) dd += 600;   // не толпимся
             if (p.def.charger) dd += 250;
             if (dd < bd) { bd = dd; best = p; }
@@ -92,11 +125,12 @@ class Helper {
  * Пёс Бобик: облаивает свиней, те пугаются и замедляются
  */
 class Dog {
-    constructor(index, x, y) {
+    constructor(index, x, y, game = null) {
         this.index = index;
         this.x = x; this.y = y;
         this.r = 10;
         this.vx = 0; this.vy = 0;
+        this.game = game;
         this.speed = 335;
         this.facing = 1; this.anim = 0; this.t = Math.random() * 5;
         this.target = null;
@@ -107,6 +141,15 @@ class Dog {
     }
 
     update(dt, g) {
+        if (g) this.game = g;
+        const gObj = this.game || g;
+        const u = (gObj && gObj.storage && gObj.storage.data && gObj.storage.data.upgrades)
+               || (gObj && gObj.save && gObj.save.upgrades)
+               || {};
+        const lvlDog = Math.max(0, Number(u.dog_power) || 0);
+
+        this.speed = 335 * (1 + 0.06 * lvlDog);
+
         this.t += dt;
         if (this.rest > 0) this.rest -= dt;
         if (this.barkT > 0) this.barkT -= dt;
@@ -114,23 +157,51 @@ class Dog {
         const pl = g.player;
 
         if (g.state === 'play' && this.rest <= 0) {
-            if (!this.target || !this.target.active || this.target.barkCd > 0 || this.target.state === 'escape') this.target = this.pickTarget(g);
+            if (!this.target || !this.target.active || this.target.barkCd > 0 || this.target.state === 'escape') {
+                this.target = this.pickTarget(g, lvlDog);
+            }
             const p = this.target;
             if (p) {
                 const dx = p.x - this.x, dy = p.y - this.y, dd = Math.hypot(dx, dy) || 1;
                 tx = dx / dd; ty = dy / dd;
-                if (dd < p.r + 30) {
-                    p.slow = 3.2; p.barkCd = 8; p.alert = 0.5;
-                    this.rest = 0.7; this.barkT = 0.35; this.target = null;
+
+                // Радиус срабатывания лая (+20% за уровень)
+                const triggerDist = (p.r + 30) * (1 + 0.20 * lvlDog);
+                if (dd < triggerDist) {
+                    // Грозный лай: радиус испуга (AoE) и длительность замедления (+0.7с за ур.)
+                    const slowDur = 3.2 + lvlDog * 0.7;
+                    const aoeRadius = 55 * (1 + 0.22 * lvlDog);
+
+                    p.slow = slowDur;
+                    p.barkCd = 8;
+                    p.alert = 0.5 + 0.1 * lvlDog;
+
+                    // Облаивает и других близких свиней вокруг (AoE эффект страха)
+                    for (const other of g.pigs) {
+                        if (!other.active || other === p || other.state === 'escape') continue;
+                        const distToOther = Math.hypot(other.x - this.x, other.y - this.y);
+                        if (distToOther < aoeRadius + other.r) {
+                            other.slow = Math.max(other.slow || 0, slowDur * 0.8);
+                            other.barkCd = Math.max(other.barkCd || 0, 6);
+                            other.alert = 0.5;
+                        }
+                    }
+
+                    this.rest = Math.max(0.4, 0.7 - 0.05 * lvlDog);
+                    this.barkT = 0.35;
+                    this.target = null;
                     g.sfx.bark();
-                    g.fx.text(this.x, this.y - 30, 'ГАВ!', { color: '#ffffff', size: 18, life: 0.6 });
-                    g.fx.ring(this.x, this.y, 30, 'rgba(255,255,255,0.8)', 0.3, 3);
+                    const barkTxt = lvlDog >= 4 ? 'ГРОЗНЫЙ ГАВ!' : (lvlDog >= 2 ? 'ГАВ-ГАВ!' : 'ГАВ!');
+                    g.fx.text(this.x, this.y - 30, barkTxt, { color: '#ffffff', size: 18 + lvlDog * 2, life: 0.65 });
+                    g.fx.ring(this.x, this.y, aoeRadius, 'rgba(255,255,255,0.85)', 0.35, 4);
                     tx = 0; ty = 0;
                 }
             }
         }
         if (!this.target && this.rest <= 0) {
-            const ox = pl.x - pl.facing * (46 + this.index * 30), oy = pl.y + 26;
+            const p1 = pl, p2 = (g.player2 && g.player2.active !== false) ? g.player2 : null;
+            const targetPlayer = (p2 && this.index % 2 === 1) ? p2 : p1;
+            const ox = targetPlayer.x - targetPlayer.facing * (46 + this.index * 30), oy = targetPlayer.y + 26;
             const dx = ox - this.x, dy = oy - this.y, dd = Math.hypot(dx, dy) || 1;
             if (dd > 26) { const s = Math.min(1, dd / 120); tx = (dx / dd) * s; ty = (dy / dd) * s; }
         }
@@ -145,13 +216,24 @@ class Dog {
         g.world.resolve(this, this.r);
     }
 
-    pickTarget(g) {
+    pickTarget(g, lvlDog) {
+        if (lvlDog === undefined) {
+            const gObj = this.game || g;
+            const u = (gObj && gObj.storage && gObj.storage.data && gObj.storage.data.upgrades)
+                   || (gObj && gObj.save && gObj.save.upgrades)
+                   || {};
+            lvlDog = Math.max(0, Number(u.dog_power) || 0);
+        }
         let best = null, bd = Infinity;
         const pl = g.player;
+        const pl2 = (g.player2 && g.player2.active !== false) ? g.player2 : null;
+        const maxRange = 620 * (1 + 0.15 * lvlDog);
         for (const p of g.pigs) {
             if (!p.active || p.barkCd > 0 || p.def.charger || p.state === 'escape' || p.state === 'burst' || p.frozen > 0) continue;
-            let dd = Math.hypot(p.x - pl.x, p.y - pl.y);
-            if (dd > 620) continue;
+            const dd1 = Math.hypot(p.x - pl.x, p.y - pl.y);
+            const distToFarmers = pl2 ? Math.min(dd1, Math.hypot(p.x - pl2.x, p.y - pl2.y)) : dd1;
+            if (distToFarmers > maxRange) continue;
+            let dd = distToFarmers;
             for (const o of g.dogs) if (o !== this && o.target === p) dd += 800;
             if (p.def.gold) dd -= 300;
             if (dd < bd) { bd = dd; best = p; }
