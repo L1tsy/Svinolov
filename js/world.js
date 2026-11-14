@@ -5,15 +5,57 @@
  * Поддерживает одиночный режим (solo) и кооперативные карты (coop)
  */
 class World {
-    constructor(tier, seasonIdx, modeOrOpts = 'solo', coopMapIdx = 0) {
+    constructor(tier, seasonIdx, modeOrOpts = 'solo', coopMapIdx = 0, prestigeOrOpts = 0, hasDualBarnsOpt = false) {
         let mode = 'solo';
         let mapIdx = 0;
+        let prestige = 0;
+        let hasDualBarns = false;
+
         if (typeof modeOrOpts === 'string') {
             mode = modeOrOpts;
-            mapIdx = coopMapIdx || 0;
+            if (typeof coopMapIdx === 'number') {
+                mapIdx = coopMapIdx;
+            } else if (typeof coopMapIdx === 'object' && coopMapIdx !== null) {
+                mapIdx = coopMapIdx.coopMapIdx || 0;
+                if (coopMapIdx.prestige !== undefined) prestige = Number(coopMapIdx.prestige) || 0;
+                if (coopMapIdx.hasDualBarns !== undefined) hasDualBarns = Boolean(coopMapIdx.hasDualBarns);
+            }
+            if (typeof prestigeOrOpts === 'number') {
+                prestige = prestige || prestigeOrOpts;
+            } else if (typeof prestigeOrOpts === 'object' && prestigeOrOpts !== null) {
+                if (prestigeOrOpts.prestige !== undefined) prestige = Number(prestigeOrOpts.prestige) || 0;
+                if (prestigeOrOpts.hasDualBarns !== undefined) hasDualBarns = Boolean(prestigeOrOpts.hasDualBarns);
+            }
+            if (hasDualBarnsOpt) hasDualBarns = true;
         } else if (typeof modeOrOpts === 'object' && modeOrOpts !== null) {
             mode = modeOrOpts.mode || 'solo';
             mapIdx = modeOrOpts.coopMapIdx || coopMapIdx || 0;
+            if (modeOrOpts.prestige !== undefined) prestige = Number(modeOrOpts.prestige) || 0;
+            if (modeOrOpts.hasDualBarns !== undefined) hasDualBarns = Boolean(modeOrOpts.hasDualBarns);
+        }
+
+        // Авто-определение престижа и второго амбара из глобального состояния/хранилища, если не задано напрямую
+        if (!hasDualBarns && prestige === 0 && typeof window !== 'undefined') {
+            try {
+                if (window.game && window.game.storage && window.game.storage.data) {
+                    const sd = window.game.storage.data;
+                    prestige = Number(sd.prestige) || 0;
+                    if (sd.hasDualBarns) hasDualBarns = true;
+                } else if (window.game && window.game.save) {
+                    const s = window.game.save;
+                    prestige = Number(s.prestige) || 0;
+                    if (s.hasDualBarns) hasDualBarns = true;
+                } else if (typeof localStorage !== 'undefined' && typeof CONFIG !== 'undefined' && CONFIG.SAVE_KEY) {
+                    const raw = localStorage.getItem(CONFIG.SAVE_KEY);
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (parsed) {
+                            prestige = Number(parsed.prestige) || 0;
+                            if (parsed.hasDualBarns) hasDualBarns = true;
+                        }
+                    }
+                }
+            } catch (e) {}
         }
 
         this.tier = tier;
@@ -21,6 +63,10 @@ class World {
         this.season = SEASONS[seasonIdx];
         this.mode = mode;
         this.coopMapIdx = mapIdx;
+        this.prestige = prestige;
+
+        // Двойные амбары активны, если включен флаг hasDualBarns или престиж >= 6 (в соло или при явном указании)
+        this.hasDualBarns = (mode !== 'coop') && Boolean(hasDualBarns || prestige >= 6);
 
         // Размеры карты: для коопа даем больше простора двум игрокам
         if (this.mode === 'coop') {
@@ -47,6 +93,13 @@ class World {
         this._barn2Open = 0;
         this._barn2Bounce = 0;
 
+        this.northBarn = null;
+        this.southBarn = null;
+        this.northDoor = null;
+        this.southDoor = null;
+        this.plaza = null;
+        this.spawnPoint = null;
+
         if (this.mode === 'coop') {
             this.buildCoop(tier, seasonIdx, this.coopMapIdx);
         } else {
@@ -57,9 +110,9 @@ class World {
 
     /** Геттеры/сеттеры для анимации ворот амбаров с поддержкой обоих амбаров */
     get barnOpen() { return this._barnOpen; }
-    set barnOpen(v) { this._barnOpen = v; this._barn2Open = v; }
+    set barnOpen(v) { this._barnOpen = v; if (!this.hasDualBarns && this.mode !== 'coop') this._barn2Open = v; }
     get barnBounce() { return this._barnBounce; }
-    set barnBounce(v) { this._barnBounce = v; this._barn2Bounce = v; }
+    set barnBounce(v) { this._barnBounce = v; if (!this.hasDualBarns && this.mode !== 'coop') this._barn2Bounce = v; }
     get barn2Open() { return this._barn2Open; }
     set barn2Open(v) { this._barn2Open = v; }
     get barn2Bounce() { return this._barn2Bounce; }
@@ -73,6 +126,11 @@ class World {
     /* ================= Одиночная генерация (Solo) ================= */
     build() {
         const W = this.w, H = this.h, rnd = U.seeded(4242 + this.tier * 97);
+        if (this.hasDualBarns) {
+            this.buildDualBarns(rnd);
+            return;
+        }
+
         const addBuilding = (type, bx, by, w, h) => {
             const b = { type, x: bx, y: by, w, h, solid: true };
             this.props.push(b);
@@ -86,6 +144,10 @@ class World {
         this.door = { x: W / 2, y: this.barn.y + 10 };
         this.door1 = this.door;
         this.door2 = null;
+        this.northBarn = null;
+        this.southBarn = null;
+        this.northDoor = null;
+        this.southDoor = null;
         this.barns = [this.barn];
         this.doors = [this.door];
 
@@ -194,6 +256,236 @@ class World {
         this.pumpkins = this.tier >= 2 ? { x: W * 0.64, y: H * 0.18 } : null;
     }
 
+    /* ================= Двойные амбары на 6+ престиже (Dual Barns: Северный и Южный) ================= */
+    buildDualBarns(rnd) {
+        const W = this.w, H = this.h;
+        const addBuilding = (type, bx, by, w, h, extra = {}) => {
+            const b = { type, x: bx, y: by, w, h, solid: true, ...extra };
+            this.props.push(b);
+            if (extra.facing === 'north') {
+                // Ворота смотрят на север: коллизия корпуса расположена к югу от ворот
+                this.rects.push({ x: bx - w / 2 + 5, y: by - 4, w: w - 10, h: h * 0.68 - 2 });
+            } else {
+                this.rects.push({ x: bx - w / 2 + 5, y: by - h * 0.68, w: w - 10, h: h * 0.68 - 2 });
+            }
+            return b;
+        };
+
+        // 1. Северный амбар (North Barn: top-center, x = W / 2, y = 140, ворота на юг)
+        this.northBarn = addBuilding('barn', W / 2, 140, 204, 150, {
+            barnIndex: 1,
+            name: 'Северный амбар',
+            facing: 'south'
+        });
+        this.northDoor = {
+            x: W / 2,
+            y: this.northBarn.y + 10,
+            facing: 'south',
+            name: 'Северный амбар',
+            barnIndex: 1
+        };
+
+        // 2. Южный амбар (South Barn: bottom-center, x = W / 2, y = H - 140, ворота на север)
+        this.southBarn = addBuilding('barn', W / 2, H - 140, 204, 150, {
+            barnIndex: 2,
+            name: 'Южный амбар',
+            facing: 'north'
+        });
+        this.southDoor = {
+            x: W / 2,
+            y: this.southBarn.y - 12,
+            facing: 'north',
+            name: 'Южный амбар',
+            barnIndex: 2
+        };
+
+        // Списки амбаров и дверей, а также обратная совместимость
+        this.barns = [this.northBarn, this.southBarn];
+        this.doors = [this.northDoor, this.southDoor];
+        this.barn1 = this.northBarn;
+        this.barn2 = this.southBarn;
+        this.door1 = this.northDoor;
+        this.door2 = this.southDoor;
+        this.barn = this.northBarn;
+        this.door = this.northDoor;
+
+        // 3. Центральная деревенская площадь и точка возрождения игрока (Central Plaza / Village Square)
+        this.plaza = { x: W / 2, y: H / 2, r: 84 };
+        this.spawnPoint = { x: W / 2, y: H / 2 };
+
+        // 4. Постройки фермы по секторам
+        const house = addBuilding('house', W * 0.16, H * 0.24, 148, 122);
+        const mill = addBuilding('mill', W * 0.84, H * 0.25, 92, 130);
+        const shed = addBuilding('shed', W * 0.16, H * 0.78, 128, 96);
+        const coop = addBuilding('coop', W * 0.84, H * 0.78, 116, 88);
+
+        // Интерактивные объекты: Западный колодец, пугало и фермерский колокол
+        const well = { type: 'well', x: W * 0.36, y: H * 0.50, r: 20 };
+        this.props.push(well);
+        this.circles.push({ x: well.x, y: well.y - 8, r: 20 });
+
+        const bell = { type: 'bell', x: W * 0.64, y: H * 0.36, r: 18, ringT: 0, solid: true, name: 'Колокол фермы' };
+        this.props.push(bell);
+        this.circles.push({ x: bell.x, y: bell.y - 4, r: 15 });
+        this.interactives.push(bell);
+
+        const scarecrow = { type: 'scarecrow', x: W * 0.36, y: H * 0.64, r: 16, wobble: 0, solid: true, name: 'Пугало Кузя' };
+        this.props.push(scarecrow);
+        this.circles.push({ x: scarecrow.x, y: scarecrow.y - 4, r: 14 });
+        this.interactives.push(scarecrow);
+
+        // 5. Живописный восточный пруд и пешеходный мостик к нему
+        const prx = 94 + this.tier * 20;
+        this.pond = { x: W * 0.82, y: H * 0.50, rx: prx, ry: prx * 0.64 };
+        this.circles.push({ x: this.pond.x, y: this.pond.y, r: prx - 8, sy: 0.64, water: true });
+
+        const bridge = { id: 'plaza_bridge', x: W * 0.68, y: H * 0.50, w: 128, h: 76, name: 'Мостик у пруда' };
+        this.bridges = [bridge];
+
+        // 6. Тропинки и мощеные тракты
+        const dN = this.northDoor;
+        const dS = this.southDoor;
+        const pl = this.plaza;
+
+        const mkPath = (x0, y0, x1, y1, bend = 0, w = 32) => ({
+            x0, y0,
+            cx: (x0 + x1) / 2 + bend,
+            cy: (y0 + y1) / 2,
+            x1, y1, w
+        });
+
+        this.paths = [
+            // Главный центральный проспект: Северный амбар ➜ Центральная площадь ➜ Южный амбар
+            { x0: dN.x, y0: dN.y, cx: W / 2, cy: (dN.y + pl.y) / 2, x1: pl.x, y1: pl.y - pl.r + 10, w: 42 },
+            { x0: pl.x, y0: pl.y + pl.r - 10, cx: W / 2, cy: (pl.y + dS.y) / 2, x1: dS.x, y1: dS.y, w: 42 },
+
+            // Восточный тракт: Центральная площадь ➜ Мостик ➜ Восточный берег пруда
+            { x0: pl.x + pl.r - 8, y0: pl.y, cx: (pl.x + bridge.x) / 2, cy: pl.y, x1: bridge.x - bridge.w / 2 - 2, y1: bridge.y, w: 36 },
+            { x0: bridge.x - bridge.w / 2, y0: bridge.y, cx: bridge.x, cy: bridge.y, x1: bridge.x + bridge.w / 2, y1: bridge.y, w: 36 },
+            { x0: bridge.x + bridge.w / 2 + 2, y0: bridge.y, cx: (bridge.x + W * 0.94) / 2, cy: bridge.y, x1: W * 0.94, y1: H * 0.50, w: 34 },
+
+            // Западный проход: Центральная площадь ➜ Колодец
+            mkPath(pl.x - pl.r + 8, pl.y, well.x + 28, well.y, -10, 32),
+
+            // Северо-западные дорожки к усадьбе (House)
+            mkPath(dN.x - 45, dN.y + 4, house.x + 30, house.y + 12, -45, 30),
+            mkPath(pl.x - pl.r * 0.6, pl.y - pl.r * 0.6, house.x + 30, house.y + 12, -30, 28),
+
+            // Северо-восточные дорожки к мельнице (Mill)
+            mkPath(dN.x + 45, dN.y + 4, mill.x - 20, mill.y + 12, 45, 30),
+            mkPath(pl.x + pl.r * 0.6, pl.y - pl.r * 0.6, mill.x - 20, mill.y + 12, 30, 28),
+
+            // Юго-западные дорожки к сараю (Shed)
+            mkPath(dS.x - 45, dS.y - 4, shed.x + 30, shed.y + 6, -45, 30),
+            mkPath(pl.x - pl.r * 0.6, pl.y + pl.r * 0.6, shed.x + 30, shed.y + 6, -30, 28),
+
+            // Юго-восточные дорожки к курятнику (Coop)
+            mkPath(dS.x + 45, dS.y - 4, coop.x - 20, coop.y + 6, 45, 30),
+            mkPath(pl.x + pl.r * 0.6, pl.y + pl.r * 0.6, coop.x - 20, coop.y + 6, 30, 28)
+        ];
+
+        // Точки на тропинках для проверки зон отчуждения препятствий
+        const pathPts = [];
+        for (const p of this.paths) {
+            for (let i = 0; i <= 14; i++) {
+                const t = i / 14, a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, c = t * t;
+                pathPts.push({ x: a * p.x0 + b * p.cx + c * p.x1, y: a * p.y0 + b * p.cy + c * p.y1 });
+            }
+        }
+
+        const placed = [];
+        const okSpot = (x, y, r, pathGap = 44) => {
+            if (x < this.margin + 30 || x > W - this.margin - 30 || y < this.margin + 50 || y > H - this.margin - 20) return false;
+            if (Math.hypot(x - dN.x, y - dN.y) < 170) return false;
+            if (Math.hypot(x - dS.x, y - dS.y) < 170) return false;
+            if (Math.hypot(x - pl.x, y - pl.y) < 110) return false;
+            for (const b of this.bridges) {
+                if (Math.hypot(x - b.x, y - b.y) < b.w * 0.6) return false;
+            }
+            for (const rc of this.rects) {
+                if (x > rc.x - r - 40 && x < rc.x + rc.w + r + 40 && y > rc.y - r - 60 && y < rc.y + rc.h + r + 50) return false;
+            }
+            for (const c of this.circles) {
+                if (Math.hypot(x - c.x, (y - c.y) / (c.sy || 1)) < c.r + r + 38) return false;
+            }
+            for (const p of pathPts) if (Math.hypot(x - p.x, y - p.y) < pathGap) return false;
+            for (const p of placed) if (Math.hypot(x - p.x, y - p.y) < p.r + r + 42) return false;
+            return true;
+        };
+
+        // Стога сена: коридоры загона свиней по флангам амбаров и мостика
+        const haySpots = [
+            { x: W / 2 - 120, y: 220 },
+            { x: W / 2 + 120, y: 220 },
+            { x: W / 2 - 120, y: H - 220 },
+            { x: W / 2 + 120, y: H - 220 },
+            { x: bridge.x - bridge.w / 2 - 40, y: bridge.y - 52 },
+            { x: bridge.x - bridge.w / 2 - 40, y: bridge.y + 52 }
+        ];
+        for (const h of haySpots) {
+            placed.push({ x: h.x, y: h.y, r: 24 });
+            this.props.push({ type: 'hay', x: h.x, y: h.y, r: 24 });
+            this.circles.push({ x: h.x, y: h.y - 4, r: 22 });
+        }
+
+        // Яблоневый сад в северо-западном секторе (Tier >= 1)
+        if (this.tier >= 1) {
+            const ox = W * 0.22, oy = H * 0.38;
+            for (let i = 0; i < 6; i++) {
+                const x = ox + (i % 3) * 88, y = oy + Math.floor(i / 3) * 92;
+                placed.push({ x, y, r: 26 });
+                this.props.push({ type: 'tree', x, y, r: 26, seed: i * 3.1, v: 1, apple: true });
+                this.circles.push({ x, y: y - 4, r: 13 });
+            }
+        }
+
+        // Разброс деревьев, кустов и камней
+        const scatter = (type, count, r, colR, edgeBias, extra = {}) => {
+            let made = 0, tries = 0;
+            while (made < count && tries++ < count * 40) {
+                let x, y;
+                if (rnd() < edgeBias) {
+                    const side = Math.floor(rnd() * 4), off = this.margin + 40 + rnd() * 160;
+                    if (side === 0) { x = off; y = rnd() * H; }
+                    else if (side === 1) { x = W - off; y = rnd() * H; }
+                    else if (side === 2) { x = rnd() * W; y = off + 30; }
+                    else { x = rnd() * W; y = H - off; }
+                } else { x = rnd() * W; y = rnd() * H; }
+                if (!okSpot(x, y, r)) continue;
+                placed.push({ x, y, r });
+                this.props.push({ type, x, y, r, seed: rnd() * 100, v: Math.floor(rnd() * 3), ...extra });
+                if (colR) this.circles.push({ x, y: y - 4, r: colR });
+                made++;
+            }
+        };
+
+        const area = W * H;
+        scatter('tree', Math.round(area / 85000), 26, 13, 0.65);
+        scatter('hay', 5 + this.tier * 2, 24, 22, 0.15);
+        scatter('bush', 8 + this.tier * 3, 17, 12, 0.3);
+        scatter('rock', 6 + this.tier * 3, 12, 11, 0.3);
+
+        this.props.sort((a, b) => a.y - b.y);
+
+        // Земляные декорации (травинки, цветы, галька)
+        this.decor = [];
+        const count = Math.floor(area / 4200);
+        const fl = this.season.flowers;
+        for (let i = 0; i < count; i++) {
+            const x = this.margin + rnd() * (W - this.margin * 2), y = this.margin + rnd() * (H - this.margin * 2);
+            const r = rnd();
+            let type = 'tuft';
+            if (fl.length && r < 0.3 * this.season.flowerRate) type = 'flower';
+            else if (r > 0.93) type = 'pebble';
+            this.decor.push({ x, y, type, size: 3 + rnd() * 4, c: Math.floor(rnd() * 8), a: rnd() * 6.28 });
+        }
+        this.blotches = [];
+        for (let i = 0; i < Math.floor(area / 14000); i++) {
+            this.blotches.push({ x: rnd() * W, y: rnd() * H, rx: 40 + rnd() * 110, ry: 26 + rnd() * 60, a: rnd() * 3.14, light: rnd() < 0.5 });
+        }
+        this.pumpkins = this.tier >= 2 ? { x: W * 0.34, y: H * 0.22 } : null;
+    }
+
     /* ================= Кооперативная генерация (Co-op) ================= */
     buildCoop(tier, seasonIdx, coopMapIdx = 0) {
         const W = this.w, H = this.h;
@@ -262,30 +554,55 @@ class World {
         this.river = { points: riverPoints, width: riverWidth };
 
         // 3. Деревянные пешеходные мостики (Wooden Footbridges)
+        // Мосты центрируются строго по руслу реки через сэмплер evalRiverPoint(t)
         this.bridges = [];
         if (coopMapIdx === 1) {
-            this.bridges.push({ id: 'north_bridge', x: W * 0.42, y: H * 0.32, w: 132, h: 78, name: 'Северный мост' });
-            this.bridges.push({ id: 'south_bridge', x: W * 0.58, y: H * 0.68, w: 132, h: 78, name: 'Южный мост' });
+            // Диагональная река: 2 широких мостика
+            const pN = this.evalRiverPoint(0.30);
+            const pS = this.evalRiverPoint(0.68);
+            this.bridges.push({ id: 'north_bridge', x: pN.x, y: pN.y, w: 148, h: 86, name: 'Северный мост' });
+            this.bridges.push({ id: 'south_bridge', x: pS.x, y: pS.y, w: 148, h: 86, name: 'Южный мост' });
         } else {
-            this.bridges.push({ id: 'north_bridge', x: W * 0.52, y: H * 0.22, w: 126, h: 76, name: 'Северный мост' });
-            this.bridges.push({ id: 'center_bridge', x: W * 0.50, y: H * 0.50, w: 140, h: 88, name: 'Центральный мост' });
-            this.bridges.push({ id: 'south_bridge', x: W * 0.48, y: H * 0.78, w: 126, h: 76, name: 'Южный мост' });
+            // Речная долина: 3 моста (Северный, Центральный, Южный)
+            const pN = this.evalRiverPoint(0.24);
+            const pC = this.evalRiverPoint(0.50);
+            const pS = this.evalRiverPoint(0.76);
+            this.bridges.push({ id: 'north_bridge', x: pN.x, y: pN.y, w: 148, h: 84, name: 'Северный мост' });
+            this.bridges.push({ id: 'center_bridge', x: pC.x, y: pC.y, w: 154, h: 90, name: 'Центральный мост' });
+            this.bridges.push({ id: 'south_bridge', x: pS.x, y: pS.y, w: 148, h: 84, name: 'Южный мост' });
         }
 
-        // Вычисляем сэмплы реки и добавляем физические коллизии воды (кроме мостов)
+        // Вычисляем сэмплы реки и добавляем физические коллизии воды (кроме мостов и свободных створов)
         const riverSamples = [];
-        const steps = 44;
+        const steps = 48;
         for (let i = 0; i <= steps; i++) {
             const t = i / steps;
             const p = this.evalRiverPoint(t);
             riverSamples.push(p);
 
-            // Если точка не на мосту — добавляем коллизию воды
-            if (!this.isOnBridge(p.x, p.y, 16)) {
-                this.circles.push({ x: p.x, y: p.y, r: riverWidth * 0.46, sy: 0.92, water: true });
+            // Исключаем точки в створе мостов, чтобы окружности воды не наезжали на настил и береговые подъезды
+            let inBridgeZone = false;
+            for (const b of this.bridges) {
+                const dy = Math.abs(p.y - b.y);
+                const dx = Math.abs(p.x - b.x);
+                if (dy < b.h / 2 + riverWidth * 0.36 && dx < b.w / 2 + 30) {
+                    inBridgeZone = true;
+                    break;
+                }
+            }
+            if (!inBridgeZone) {
+                this.circles.push({ x: p.x, y: p.y, r: riverWidth * 0.44, sy: 0.92, water: true });
             }
         }
         this.river.samples = riverSamples;
+
+        // Прямоугольные / сглаженные отсечки воды непосредственно у перил каждого моста
+        for (const b of this.bridges) {
+            const northY = b.y - b.h / 2 - 32;
+            const southY = b.y + b.h / 2 + 32;
+            this.circles.push({ x: b.x, y: northY, r: riverWidth * 0.40, sy: 0.82, water: true });
+            this.circles.push({ x: b.x, y: southY, r: riverWidth * 0.40, sy: 0.82, water: true });
+        }
 
         // 4. Интерактивные элементы карты
         // Пугало (Scarecrow)
@@ -309,26 +626,72 @@ class World {
 
         // 5. Тропинки между амбарами, мостами и домами
         const d1 = this.door1, d2 = this.door2;
-        const mkPath = (x0, y0, x1, y1, bend = 0, w = 26) => {
+        const mkPath = (x0, y0, x1, y1, bend = 0, w = 30) => {
             const mx = (x0 + x1) / 2 + bend, my = (y0 + y1) / 2;
             return { x0, y0, cx: mx, cy: my, x1, y1, w };
         };
 
-        this.paths = [
-            // От Амбара 1 к мостам и постройкам
-            mkPath(d1.x, d1.y, this.bridges[0].x, this.bridges[0].y, -20),
-            mkPath(d1.x, d1.y, this.bridges[Math.floor(this.bridges.length / 2)].x, this.bridges[Math.floor(this.bridges.length / 2)].y, 0, 32),
-            mkPath(d1.x, d1.y, this.bridges[this.bridges.length - 1].x, this.bridges[this.bridges.length - 1].y, -20),
-            mkPath(d1.x, d1.y, house.x, house.y + 12, -40),
-            mkPath(d1.x, d1.y, shed.x + 20, shed.y + 6, -30),
+        this.paths = [];
 
-            // От Амбара 2 к мостам и постройкам
-            mkPath(d2.x, d2.y, this.bridges[0].x, this.bridges[0].y, 20),
-            mkPath(d2.x, d2.y, this.bridges[Math.floor(this.bridges.length / 2)].x, this.bridges[Math.floor(this.bridges.length / 2)].y, 0, 32),
-            mkPath(d2.x, d2.y, this.bridges[this.bridges.length - 1].x, this.bridges[this.bridges.length - 1].y, 20),
-            mkPath(d2.x, d2.y, mill.x, mill.y + 12, 40),
-            mkPath(d2.x, d2.y, coop.x - 20, coop.y + 6, 30)
-        ];
+        // Для каждого моста:
+        // 1) Прямой сквозной проход по настилу моста
+        // 2) Прямой центрированный подъезд с западного берега (без изломов и скосов)
+        // 3) Прямой центрированный подъезд с восточного берега (без изломов и скосов)
+        const westNodes = [];
+        const eastNodes = [];
+        const appLen = 75; // длина прямого центрированного подъезда к мосту
+
+        for (const b of this.bridges) {
+            const hw = b.w / 2;
+            const wNode = { x: b.x - hw - appLen, y: b.y };
+            const eNode = { x: b.x + hw + appLen, y: b.y };
+            westNodes.push(wNode);
+            eastNodes.push(eNode);
+
+            // Сквозной прямой настил через мост
+            this.paths.push({
+                x0: b.x - hw - 14, y0: b.y,
+                cx: b.x, cy: b.y,
+                x1: b.x + hw + 14, y1: b.y,
+                w: 36
+            });
+
+            // Прямой центрированный подъезд к мосту с левого (западного) берега
+            this.paths.push({
+                x0: wNode.x, y0: b.y,
+                cx: b.x - hw - appLen * 0.5, cy: b.y,
+                x1: b.x - hw + 2, y1: b.y,
+                w: 36
+            });
+
+            // Прямой центрированный подъезд к мосту с правого (восточного) берега
+            this.paths.push({
+                x0: b.x + hw - 2, y0: b.y,
+                cx: b.x + hw + appLen * 0.5, cy: b.y,
+                x1: eNode.x, y1: b.y,
+                w: 36
+            });
+
+            // Дорожка от Амбара 1 к западному узлу подъезда моста
+            this.paths.push(mkPath(d1.x, d1.y, wNode.x, wNode.y, -18, 32));
+
+            // Дорожка от Амбара 2 к восточному узлу подъезда моста
+            this.paths.push(mkPath(d2.x, d2.y, eNode.x, eNode.y, 18, 32));
+        }
+
+        // Продольные прибрежные дорожки вдоль реки (соединяют подъезды к мостам)
+        for (let i = 0; i < westNodes.length - 1; i++) {
+            this.paths.push(mkPath(westNodes[i].x, westNodes[i].y, westNodes[i + 1].x, westNodes[i + 1].y, -12, 28));
+        }
+        for (let i = 0; i < eastNodes.length - 1; i++) {
+            this.paths.push(mkPath(eastNodes[i].x, eastNodes[i].y, eastNodes[i + 1].x, eastNodes[i + 1].y, 12, 28));
+        }
+
+        // Дорожки от амбаров к хозяйственным постройкам
+        this.paths.push(mkPath(d1.x, d1.y, house.x, house.y + 12, -35, 28));
+        this.paths.push(mkPath(d1.x, d1.y, shed.x + 20, shed.y + 6, -25, 28));
+        this.paths.push(mkPath(d2.x, d2.y, mill.x, mill.y + 12, 35, 28));
+        this.paths.push(mkPath(d2.x, d2.y, coop.x - 20, coop.y + 6, 25, 28));
 
         // 6. Коридоры препятствий для загона свиней (Apple Orchard & Hay Funnels)
         // Яблоневый сад слева (вертикальные аллеи для загона)
@@ -342,22 +705,27 @@ class World {
         }
 
         // Коридоры из стогов сена для флангового перехвата (Hay Bales)
-        const haySpots = [
-            // Ворота перед мостами
-            { x: this.bridges[0].x - 110, y: this.bridges[0].y - 25 },
-            { x: this.bridges[0].x + 110, y: this.bridges[0].y + 25 },
-            { x: this.bridges[this.bridges.length - 1].x - 110, y: this.bridges[this.bridges.length - 1].y + 25 },
-            { x: this.bridges[this.bridges.length - 1].x + 110, y: this.bridges[this.bridges.length - 1].y - 25 },
-            // Коридоры у Амбара 1
+        // Стога сена образуют защитные фланговые кулисы мостов, оставляя проходы широкими и чистыми
+        const haySpots = [];
+        for (const b of this.bridges) {
+            const hw = b.w / 2;
+            const flankY = b.h / 2 + 34;
+            // Западные кулисы перед мостом
+            haySpots.push({ x: b.x - hw - 55, y: b.y - flankY });
+            haySpots.push({ x: b.x - hw - 55, y: b.y + flankY });
+            // Восточные кулисы перед мостом
+            haySpots.push({ x: b.x + hw + 55, y: b.y - flankY });
+            haySpots.push({ x: b.x + hw + 55, y: b.y + flankY });
+        }
+        // Дополнительные коридоры у амбаров и в поле
+        haySpots.push(
             { x: b1x - 90, y: b1y + 60 },
             { x: b1x + 90, y: b1y + 60 },
-            // Коридоры у Амбара 2
             { x: b2x - 90, y: b2y + 60 },
             { x: b2x + 90, y: b2y + 60 },
-            // Полевые ловушки
             { x: W * 0.65, y: H * 0.32 },
             { x: W * 0.68, y: H * 0.72 }
-        ];
+        );
         for (const h of haySpots) {
             this.props.push({ type: 'hay', x: h.x, y: h.y, r: 24 });
             this.circles.push({ x: h.x, y: h.y - 4, r: 22 });
@@ -369,9 +737,19 @@ class World {
             while (placedCount < count && tries++ < count * 35) {
                 const x = this.margin + 40 + rnd() * (W - this.margin * 2 - 80);
                 const y = this.margin + 50 + rnd() * (H - this.margin * 2 - 80);
-                // Проверяем расстояние от дверей, реки и мостов
+                // Проверяем расстояние от дверей, реки и створов мостов
                 if (Math.hypot(x - d1.x, y - d1.y) < 160 || Math.hypot(x - d2.x, y - d2.y) < 160) continue;
-                if (this.isOnBridge(x, y, 30)) continue;
+
+                // Зона отчуждения мостов и прямых подъездов к ним: не спавним препятствия в коридоре
+                let inBridgeCorridor = false;
+                for (const b of this.bridges) {
+                    if (Math.abs(x - b.x) < b.w / 2 + 105 && Math.abs(y - b.y) < b.h / 2 + 48) {
+                        inBridgeCorridor = true;
+                        break;
+                    }
+                }
+                if (inBridgeCorridor) continue;
+
                 let nearWater = false;
                 for (const s of this.river.samples) {
                     if (Math.hypot(x - s.x, y - s.y) < riverWidth * 0.6) { nearWater = true; break; }
@@ -426,16 +804,42 @@ class World {
         return { x: this.w * 0.5, y: t * this.h };
     }
 
-    /** Проверка, находится ли сущность на одном из деревянных мостиков */
+    /** Проверка, находится ли сущность на одном из деревянных мостиков или в створе свободного прохода */
     isOnBridge(x, y, pad = 8) {
         if (!this.bridges || !this.bridges.length) return false;
+        const padX = (typeof pad === 'number') ? Math.max(pad, 38) : (pad && pad.x !== undefined ? pad.x : 38);
+        const padY = (typeof pad === 'number') ? pad : (pad && pad.y !== undefined ? pad.y : 8);
         for (const b of this.bridges) {
-            const hw = b.w / 2 + pad, hh = b.h / 2 + pad;
+            const hw = b.w / 2 + padX, hh = b.h / 2 + padY;
             if (x >= b.x - hw && x <= b.x + hw && y >= b.y - hh && y <= b.y + hh) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** Возвращает геометрическую информацию о русле реки в окрестности точки (x, y) */
+    getRiverInfo(x, y) {
+        if (!this.river || !this.river.samples || !this.river.samples.length) return null;
+        const rw = this.river.width || 96;
+        const smp = this.river.samples;
+        let best = smp[0], minDy = Math.abs(y - best.y);
+        for (let i = 1; i < smp.length; i++) {
+            const dy = Math.abs(y - smp[i].y);
+            if (dy < minDy) { minDy = dy; best = smp[i]; }
+        }
+        const rx = best.x;
+        const bank = x < rx ? 'west' : 'east';
+        const bankEdgeX = bank === 'west' ? rx - rw * 0.5 : rx + rw * 0.5;
+        const distToBank = bank === 'west' ? (bankEdgeX - x) : (x - bankEdgeX);
+        return {
+            rx: best.x,
+            ry: best.y,
+            rw,
+            bank,
+            distToBank,
+            distToCenter: Math.abs(x - rx)
+        };
     }
 
     /** Возвращает ближайшую дверь амбара для заданной точки */
@@ -449,18 +853,31 @@ class World {
         return best;
     }
 
-    /** Возвращает дверь конкретного игрока (P1 -> door1, P2 -> door2) */
-    getDoorForPlayer(p) {
-        const id = (typeof p === 'number') ? p : (p && p.id ? p.id : 1);
-        if (id === 2 && this.door2) return this.door2;
-        return this.door1 || this.door;
+    /** Возвращает стартовую точку спавна игрока с учетом режима и амбаров */
+    getPlayerSpawn(id = 1) {
+        if (this.hasDualBarns && this.spawnPoint) {
+            return { x: this.spawnPoint.x, y: this.spawnPoint.y };
+        }
+        if (this.mode === 'coop') {
+            const d = id === 2 ? (this.door2 || this.door) : (this.door1 || this.door);
+            return { x: d.x, y: d.y + 60 };
+        }
+        const d = this.door1 || this.door;
+        return { x: d.x, y: d.y + 84 };
     }
 
-    /** Возвращает амбар конкретного игрока (P1 -> barn1, P2 -> barn2) */
+    /** Возвращает дверь конкретного игрока (P1 -> door1 / northDoor, P2 -> door2 / southDoor) */
+    getDoorForPlayer(p) {
+        const id = (typeof p === 'number') ? p : (p && p.id ? p.id : 1);
+        if (id === 2 && (this.door2 || this.southDoor)) return this.door2 || this.southDoor;
+        return this.door1 || this.northDoor || this.door;
+    }
+
+    /** Возвращает амбар конкретного игрока (P1 -> barn1 / northBarn, P2 -> barn2 / southBarn) */
     getBarnForPlayer(p) {
         const id = (typeof p === 'number') ? p : (p && p.id ? p.id : 1);
-        if (id === 2 && this.barn2) return this.barn2;
-        return this.barn1 || this.barn;
+        if (id === 2 && (this.barn2 || this.southBarn)) return this.barn2 || this.southBarn;
+        return this.barn1 || this.northBarn || this.barn;
     }
 
     /** Активация открытия ворот амбара */
@@ -604,7 +1021,12 @@ class World {
             }
             return { x, y };
         }
-        return { x: this.door.x + U.rand(-180, 180), y: this.door.y + U.rand(90, 200) };
+        if (this.hasDualBarns && this.plaza) {
+            return { x: this.plaza.x + U.rand(-60, 60), y: this.plaza.y + U.rand(-60, 60) };
+        }
+        const d = (this.doors && this.doors.length > 1) ? U.pick(this.doors) : (this.door || { x: this.w / 2, y: this.h / 2 });
+        const offY = (d && d.facing === 'north') ? U.rand(-180, -80) : U.rand(80, 180);
+        return { x: d.x + U.rand(-160, 160), y: d.y + offY };
     }
 
     addPuddle(x, y, r = 34, life = 11) {
@@ -715,15 +1137,55 @@ class World {
 
         // Площадки перед воротами амбаров
         for (const d of this.doors) {
+            const offY = (d && d.facing === 'north') ? -14 : 14;
             ctx.fillStyle = s.pathEdge;
-            ctx.beginPath(); ctx.ellipse(d.x, d.y + 14, 88, 38, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(d.x, d.y + offY, 88, 38, 0, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = s.path;
-            ctx.beginPath(); ctx.ellipse(d.x, d.y + 14, 82, 33, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(d.x, d.y + offY, 82, 33, 0, 0, Math.PI * 2); ctx.fill();
         }
 
-        // Деревянные мостики в режиме коопа
-        if (this.mode === 'coop') {
+        // Центральная деревенская площадь (Central Plaza / Village Square) при 2 амбарах
+        if (this.plaza) {
+            const pl = this.plaza;
+            ctx.fillStyle = s.pathEdge;
+            ctx.beginPath(); ctx.arc(pl.x, pl.y, pl.r + 6, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = s.path;
+            ctx.beginPath(); ctx.arc(pl.x, pl.y, pl.r, 0, Math.PI * 2); ctx.fill();
+
+            // Декоративная брусчатка площади
+            ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath(); ctx.arc(pl.x, pl.y, pl.r * 0.70, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(pl.x, pl.y, pl.r * 0.35, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(pl.x - pl.r * 0.85, pl.y); ctx.lineTo(pl.x + pl.r * 0.85, pl.y);
+            ctx.moveTo(pl.x, pl.y - pl.r * 0.85); ctx.lineTo(pl.x, pl.y + pl.r * 0.85);
+            ctx.stroke();
+
+            // Внутренний орнамент мощения
+            ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+            ctx.lineWidth = 1.8;
+            for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+                const rx0 = pl.x + Math.cos(a) * pl.r * 0.35;
+                const ry0 = pl.y + Math.sin(a) * pl.r * 0.35;
+                const rx1 = pl.x + Math.cos(a) * pl.r * 0.70;
+                const ry1 = pl.y + Math.sin(a) * pl.r * 0.70;
+                ctx.beginPath(); ctx.moveTo(rx0, ry0); ctx.lineTo(rx1, ry1); ctx.stroke();
+            }
+        }
+
+        // Деревянные мостики и текстурные раструбы подъездных путей
+        if (this.bridges && this.bridges.length > 0) {
             for (const b of this.bridges) {
+                const hw = b.w / 2;
+                // Текстурные раструбы подъездов с обоих берегов, плавно центрирующие дорожки в настил
+                ctx.fillStyle = s.pathEdge;
+                ctx.beginPath(); ctx.ellipse(b.x - hw - 6, b.y, 28, b.h * 0.46, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.ellipse(b.x + hw + 6, b.y, 28, b.h * 0.46, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = s.path;
+                ctx.beginPath(); ctx.ellipse(b.x - hw - 6, b.y, 24, b.h * 0.40, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.ellipse(b.x + hw + 6, b.y, 24, b.h * 0.40, 0, 0, Math.PI * 2); ctx.fill();
+
                 this.drawBridgeDeck(ctx, b, s);
             }
         }
@@ -969,15 +1431,110 @@ class World {
 
     drawBarn(ctx, b, info) {
         const w = b.w, h = b.h, OUT = '#4a2513';
+        const isBarn2 = b.barnIndex === 2 || b === this.barn2 || b === this.southBarn;
+        const bn = isBarn2 ? this._barn2Bounce : this._barnBounce;
+
+        // Отрисовка Южного амбара (ворота смотрят на север к центральной площади)
+        if (b.facing === 'north') {
+            const bh = h * 0.72;
+            const dw = 64, dh = 66;
+
+            // Тень амбара к югу от ворот
+            this.shadow(ctx, b.x, b.y + bh * 0.45, w * 0.58, 20);
+            ctx.translate(b.x, b.y);
+            ctx.scale(1 + bn * 0.05, 1 - bn * 0.06);
+
+            // Лазурная цветовая гамма Южного амбара
+            const facadeColor = '#0284c7';
+            const plankColor = 'rgba(10,50,90,0.45)';
+            const roofTrim = '#0369a1';
+            const leafColor = '#0891b2';
+
+            // 1. Корпус амбара и скаты крыши, уходящие на юг к забору
+            ctx.fillStyle = facadeColor;
+            ctx.strokeStyle = OUT; ctx.lineWidth = 3; ctx.lineJoin = 'round';
+            ctx.beginPath();
+            ctx.moveTo(-w / 2, 4);
+            ctx.lineTo(-w / 2, bh);
+            ctx.lineTo(-w / 2 + 24, bh + 26);
+            ctx.lineTo(0, bh + 36);
+            ctx.lineTo(w / 2 - 24, bh + 26);
+            ctx.lineTo(w / 2, bh);
+            ctx.lineTo(w / 2, 4);
+            ctx.closePath();
+            ctx.fill(); ctx.stroke();
+
+            // Доски на южном скате
+            ctx.strokeStyle = plankColor; ctx.lineWidth = 1.5;
+            for (let px = -w / 2 + 15; px < w / 2; px += 15) {
+                ctx.beginPath(); ctx.moveTo(px, 4); ctx.lineTo(px, bh + 14); ctx.stroke();
+            }
+
+            // Окантовка крыши по южному краю
+            ctx.strokeStyle = OUT; ctx.lineWidth = 14; ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(-w / 2 - 6, bh); ctx.lineTo(-w / 2 + 24, bh + 26); ctx.lineTo(0, bh + 36);
+            ctx.lineTo(w / 2 - 24, bh + 26); ctx.lineTo(w / 2 + 6, bh); ctx.stroke();
+            ctx.strokeStyle = roofTrim; ctx.lineWidth = 9;
+            ctx.beginPath();
+            ctx.moveTo(-w / 2 - 6, bh); ctx.lineTo(-w / 2 + 24, bh + 26); ctx.lineTo(0, bh + 36);
+            ctx.lineTo(w / 2 - 24, bh + 26); ctx.lineTo(w / 2 + 6, bh); ctx.stroke();
+
+            if (this.season && this.season.id === 'winter') {
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.moveTo(-w / 2 + 20, bh + 22); ctx.lineTo(0, bh + 32); ctx.lineTo(w / 2 - 20, bh + 22); ctx.stroke();
+            }
+
+            // 2. Северный фасад с воротами (смотрят на север в поле к площади)
+            ctx.fillStyle = '#1d0f0a';
+            ctx.fillRect(-dw / 2, -10, dw, dh);
+
+            const openTime = this._barn2Open;
+            const open = Math.min(1, openTime * 3);
+            const leafNorth = (dir) => {
+                ctx.save();
+                ctx.translate(dir * dw / 2, 23);
+                ctx.scale(dir * (1 - open * 0.82), 1);
+                ctx.fillStyle = leafColor; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.rect(-dw / 2, -33, dw / 2, dh); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(-dw / 2, -33); ctx.lineTo(0, 33); ctx.moveTo(0, -33); ctx.lineTo(-dw / 2, 33); ctx.stroke();
+                ctx.restore();
+            };
+            leafNorth(1); leafNorth(-1);
+            ctx.strokeStyle = OUT; ctx.lineWidth = 3; ctx.strokeRect(-dw / 2, -10, dw, dh);
+
+            // Деревянные резные наличники портала ворот
+            ctx.strokeStyle = '#78350f'; ctx.lineWidth = 4.5;
+            ctx.strokeRect(-dw / 2 - 3, -12, dw + 6, dh + 4);
+
+            // Чердачное круглое окно со свинкой над воротами
+            ctx.fillStyle = '#2b1a3a'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.arc(0, -32, 14, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            const peek = Math.sin(this.time * 1.3) * 2;
+            ctx.fillStyle = '#fed7aa'; ctx.beginPath(); ctx.arc(0, -32 + peek, 8, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#f97316'; ctx.beginPath(); ctx.ellipse(0, -30 + peek, 3.8, 2.8, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#1f1320';
+            const blink = (this.time % 3.4) < 0.12 ? 0.3 : 1.3;
+            ctx.beginPath(); ctx.ellipse(-3.2, -34 + peek, 1.2, blink, 0, 0, Math.PI * 2);
+            ctx.ellipse(3.2, -34 + peek, 1.2, blink, 0, 0, Math.PI * 2); ctx.fill();
+
+            // Табличка амбара (Северный фасад)
+            const tagText = info || (b.name ? `🏠 ${b.name.toUpperCase()}` : '🏠 ЮЖНЫЙ АМБАР');
+            ctx.fillStyle = '#fff3d6'; ctx.strokeStyle = OUT; ctx.lineWidth = 2.5;
+            ctx.beginPath(); ctx.roundRect(-56, -56, 112, 21, 6); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#0369a1'; ctx.font = '900 11px "Nunito","Segoe UI",sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(tagText, 0, -45);
+            return;
+        }
+
+        // Стандартная отрисовка амбара (ворота смотрят на юг)
         this.shadow(ctx, b.x, b.y, w * 0.6, 18);
         ctx.translate(b.x, b.y);
-
-        const isBarn2 = b.barnIndex === 2 || b === this.barn2;
-        const bn = isBarn2 ? this._barn2Bounce : this._barnBounce;
         ctx.scale(1 + bn * 0.05, 1 - bn * 0.06);
         const x = -w / 2, y = -h;
 
-        // Цветовая схема: Красный (P1) vs Бирюзово-синий (P2)
+        // Цветовая схема: Красный (P1 / Северный амбар) vs Бирюзово-синий (P2 / Южный амбар)
         const facadeColor = isBarn2 ? '#0284c7' : '#d23f36';
         const plankColor = isBarn2 ? 'rgba(10,50,90,0.45)' : 'rgba(120,20,20,0.45)';
         const roofTrim = isBarn2 ? '#0369a1' : '#7b4a2b';
@@ -1007,7 +1564,7 @@ class World {
             ctx.beginPath(); ctx.moveTo(x + 22, y + 22); ctx.lineTo(0, y - 1); ctx.lineTo(-x - 22, y + 22); ctx.stroke();
         }
 
-        // Чердачное окно (для P1 — свинка, для P2 — золотая свинка / птичка)
+        // Чердачное окно (для P1 / Северного амбара — свинка, для P2 — золотая свинка / птичка)
         ctx.fillStyle = '#2b1a3a'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3;
         ctx.beginPath(); ctx.arc(0, y + 44, 15, Math.PI, 0); ctx.lineTo(15, y + 56); ctx.lineTo(-15, y + 56); ctx.closePath(); ctx.fill(); ctx.stroke();
         const peek = Math.sin(this.time * 1.3) * 2;
@@ -1039,7 +1596,11 @@ class World {
         ctx.strokeStyle = OUT; ctx.lineWidth = 3; ctx.strokeRect(-dw / 2, -dh, dw, dh);
 
         // Табличка-счётчик или название амбара
-        const tagText = info || (this.mode === 'coop' ? (isBarn2 ? '🏠 P2 АМБАР' : '🏠 P1 АМБАР') : null);
+        const tagText = info || (this.mode === 'coop'
+            ? (isBarn2 ? '🏠 P2 АМБАР' : '🏠 P1 АМБАР')
+            : (this.hasDualBarns
+                ? (isBarn2 ? '🏠 ЮЖНЫЙ АМБАР' : '🏠 СЕВЕРНЫЙ АМБАР')
+                : (b.name ? `🏠 ${b.name.toUpperCase()}` : null)));
         if (tagText) {
             ctx.fillStyle = '#fff3d6'; ctx.strokeStyle = OUT; ctx.lineWidth = 2.5;
             ctx.beginPath(); ctx.roundRect(-46, -dh - 26, 92, 21, 6); ctx.fill(); ctx.stroke();

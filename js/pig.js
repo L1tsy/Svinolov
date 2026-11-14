@@ -4,6 +4,8 @@
  * Свинья: Адаптивный умный ИИ (блуждание, паника, стайная тревога, увороты/зигзаги, укрытия, спринт) и процедурная отрисовка
  */
 class Pig {
+    static dispersionSeq = 0;
+
     constructor(type, x, y, day = 1) {
         this.type = type;
         this.def = PIG_TYPES[type];
@@ -43,12 +45,19 @@ class Pig {
         this.jinkTimer = U.rand(0.2, 0.45);
         this.jinkSide = Math.random() < 0.5 ? 1 : -1;
 
-        // 2. Спринт-рывок при опасности (Sprint burst & stamina gauge)
+        // 2. Спринт-рывок при опасности и истощение (Sprint burst & fatigue)
         this.sprintGauge = 1.0;          // Запас шкалы спринта (0..1)
         this.sprintBurstT = 0;          // Таймер активного рывка
         this.sprintCd = 0;              // Перезарядка рывка
         this.sprintCooldownMax = 4.0;
         this.isSprinting = false;
+
+        this.fatigueT = 0;              // Таймер истощения/усталости после рывка (2.8 - 3.6с)
+        this.fatigueDur = 0;            // Длительность текущего истощения
+        this.isFatigued = false;        // Флаг состояния усталости
+        this.pantingAnim = 0;           // Фаза анимации частого дыхания (panting)
+        this.fatigueSqueakCd = 0;       // Кулдаун усталого похрюкивания
+        this.isInitialSpawn = true;     // Флаг начального появления (для радиального разбега)
 
         // 3. Стайная тревога (Pack alarm)
         this.alarmT = 0;
@@ -58,6 +67,17 @@ class Pig {
         // 4. Окружение и укрытия (Cover & Environment)
         this.inCover = false;
         this.coverT = 0;
+
+        // 5. Прыжки через реку (River jumping)
+        this.isJumping = false;
+        this.jumpT = 0;
+        this.jumpDur = 0.75;
+        this.jumpStartX = 0;
+        this.jumpStartY = 0;
+        this.jumpEndX = 0;
+        this.jumpEndY = 0;
+        this.jumpArcH = 32;
+        this.jumpCd = U.rand(1.0, 2.5);
 
         this.maxHp = d.hp ? (d.boss ? d.hp + Math.floor(day / 5) * 2 : d.hp) : 1;
         this.hp = this.maxHp;
@@ -175,16 +195,116 @@ class Pig {
         }
     }
 
-    startBurst(angle, dur) {
+    /**
+     * Вычисление радиального угла разбега (0..360°) от дверей амбара на старте дня / волны.
+     * Использует золотое сечение (Golden Angle ~137.5°) для идеального
+     * распределения свиней по всем направлениям без скучивания + случайное отклонение.
+     */
+    static getRadialDispersionAngle(x, y, world = null, pigIndex = -1) {
+        if (pigIndex < 0) {
+            pigIndex = Pig.dispersionSeq++;
+        }
+        const GOLDEN_ANGLE = 2.399963229728653; // ~137.508°
+        const W = (world && world.w) ? world.w : 1800;
+        const H = (world && world.h) ? world.h : 1200;
+
+        let baseAngle;
+
+        // 1. Проверяем наличие амбаров в мире
+        if (world && world.doors && world.doors.length > 1) {
+            // Двойные амбары (Северный/Южный на Prestige 6+ или Западный/Восточный в Коопе)
+            if (y < H * 0.35) {
+                // Северный амбар (дверь смотрит на Юг): сектор разбега в сторону южной части фермы
+                const spread = Math.PI * 0.88;
+                const frac = ((pigIndex * 0.6180339887) % 1) - 0.5;
+                baseAngle = (Math.PI / 2) + frac * spread;
+            } else if (y > H * 0.65) {
+                // Южный амбар (дверь смотрит на Север): сектор разбега в сторону северной части фермы
+                const spread = Math.PI * 0.88;
+                const frac = ((pigIndex * 0.6180339887) % 1) - 0.5;
+                baseAngle = (-Math.PI / 2) + frac * spread;
+            } else if (x < W * 0.35) {
+                // Западный амбар (Кооп): сектор разбега на Восток
+                const spread = Math.PI * 0.88;
+                const frac = ((pigIndex * 0.6180339887) % 1) - 0.5;
+                baseAngle = 0 + frac * spread;
+            } else if (x > W * 0.65) {
+                // Восточный амбар (Кооп): сектор разбега на Запад
+                const spread = Math.PI * 0.88;
+                const frac = ((pigIndex * 0.6180339887) % 1) - 0.5;
+                baseAngle = Math.PI + frac * spread;
+            } else {
+                // Центральный амбар: полный разбег на 360°
+                baseAngle = (pigIndex * GOLDEN_ANGLE) % (Math.PI * 2);
+            }
+        } else if (y < H * 0.35) {
+            // Одиночный Северный амбар
+            const spread = Math.PI * 0.88;
+            const frac = ((pigIndex * 0.6180339887) % 1) - 0.5;
+            baseAngle = (Math.PI / 2) + frac * spread;
+        } else if (y > H * 0.65) {
+            // Одиночный Южный амбар
+            const spread = Math.PI * 0.88;
+            const frac = ((pigIndex * 0.6180339887) % 1) - 0.5;
+            baseAngle = (-Math.PI / 2) + frac * spread;
+        } else {
+            // Центральный амбар (классический одиночный режим): радиальный разбег на 360 градусов
+            baseAngle = (pigIndex * GOLDEN_ANGLE) % (Math.PI * 2);
+            // Если угол направлен прямо в стену амбара (строго на север -PI/2),
+            // направляем свинку в обход левого или правого крыла амбара в северное поле
+            let normAngle = baseAngle;
+            if (normAngle > Math.PI) normAngle -= Math.PI * 2;
+            if (normAngle < -0.38 && normAngle > -Math.PI + 0.38) {
+                if (normAngle > -Math.PI / 2) {
+                    baseAngle = -0.32; // обход правого крыла амбара
+                } else {
+                    baseAngle = -Math.PI + 0.32; // обход левого крыла амбара
+                }
+            }
+        }
+
+        // Случайная девиация (+- 12 градусов / +- 0.21 рад)
+        const deviation = U.rand(-0.21, 0.21);
+        return baseAngle + deviation;
+    }
+
+    /** Сброс последовательности радиального разбега */
+    static resetDispersion() {
+        Pig.dispersionSeq = 0;
+    }
+
+    startBurst(angle, dur, world = null) {
+        let finalAngle = angle;
+        // Если угол не передан или передан старый однонаправленный конус спавна из амбара:
+        // автоматически применяем процедурный радиальный разбег на 360 градусов!
+        if (finalAngle === null || finalAngle === undefined || (this.isInitialSpawn && typeof finalAngle === 'number' && Math.abs(finalAngle - Math.PI / 2) <= 1.32)) {
+            finalAngle = Pig.getRadialDispersionAngle(this.x, this.y, world);
+        }
+        this.isInitialSpawn = false;
+
         this.state = 'burst';
-        this.dirX = Math.cos(angle); this.dirY = Math.sin(angle);
-        this.burstDur = dur; this.stateT = dur;
+        this.dirX = Math.cos(finalAngle); this.dirY = Math.sin(finalAngle);
+        this.burstDur = dur || U.rand(0.75, 1.15);
+        this.stateT = this.burstDur;
         this.vx = this.dirX * 340; this.vy = this.dirY * 340;
+    }
+
+    /**
+     * Явный запуск радиального разбега от дверей амбара
+     */
+    startRadialDispersion(door = null, world = null, dur = null) {
+        const x = door ? door.x : this.x;
+        const y = door ? door.y : this.y;
+        const angle = Pig.getRadialDispersionAngle(x, y, world);
+        this.startBurst(angle, dur || U.rand(0.75, 1.15), world);
     }
 
     catchTo(tx, ty) {
         this.caught = true;
         this.state = 'caught';
+        this.isJumping = false;
+        this.fatigueT = 0;
+        this.isFatigued = false;
         this.sx = this.x; this.sy = this.y;
         this.tx = tx; this.ty = ty;
         this.flyT = 0;
@@ -209,17 +329,116 @@ class Pig {
             if (this.coverT <= 0) this.inCover = false;
         }
         if (this.sprintCd > 0) this.sprintCd -= dt;
+        if (this.jumpCd > 0) this.jumpCd -= dt;
         if (this.sprintBurstT > 0) {
             this.sprintBurstT -= dt;
-            this.isSprinting = true;
+            if (this.sprintBurstT <= 0) {
+                this.sprintBurstT = 0;
+                this.isSprinting = false;
+
+                // Вход в состояние истощения (Fatigue) на 2.8 - 3.6 секунды
+                this.fatigueDur = U.rand(2.8, 3.6);
+                this.fatigueT = this.fatigueDur;
+                this.isFatigued = true;
+                this.fatigueSqueakCd = 0;
+                this.sprintCd = Math.max(this.sprintCd, this.fatigueDur + 1.0);
+
+                if (g.fx) {
+                    g.fx.text(this.x, this.y - this.r - 20, '💦 УФФ...', { color: '#7dd3fc', size: 15, life: 0.85 });
+                    g.fx.burst(this.x, this.y - this.r * 0.4, 4, {
+                        color: ['#60a5fa', '#93c5fd'],
+                        speed: 35,
+                        life: 0.45,
+                        size: 3
+                    });
+                }
+                if (g.sfx && g.sfx.oink) {
+                    g.sfx.oink();
+                }
+            } else {
+                this.isSprinting = true;
+            }
         } else {
             this.isSprinting = false;
         }
 
-        // Восстановление запаса спринта
-        if (this.sprintBurstT <= 0) {
+        // Обработка состояния истощения / усталости (Pig Sprint Fatigue)
+        if (this.fatigueT > 0) {
+            this.fatigueT -= dt;
+            this.isFatigued = true;
+            this.pantingAnim += dt * 15; // частое запыхавшееся дыхание (panting)
+
+            // Периодические капли пота в игровой мир
+            if (Math.random() < dt * 4.0 && g.fx) {
+                g.fx.burst(this.x + U.rand(-6, 6), this.y - this.r * 0.3, 1, {
+                    color: '#60a5fa',
+                    speed: 20,
+                    life: 0.35,
+                    size: 2.4,
+                    up: -12
+                });
+            }
+
+            // Периодический усталый вздох / хрюк
+            this.fatigueSqueakCd -= dt;
+            if (this.fatigueSqueakCd <= 0) {
+                if (g.sfx && g.sfx.oink && Math.random() < 0.6) {
+                    g.sfx.oink();
+                }
+                this.fatigueSqueakCd = U.rand(1.3, 2.0);
+            }
+
+            if (this.fatigueT <= 0) {
+                this.fatigueT = 0;
+                this.isFatigued = false;
+            }
+        } else {
+            this.isFatigued = false;
+            this.pantingAnim = 0;
+        }
+
+        // Восстановление запаса спринта (не восстанавливается во время истощения)
+        if (this.sprintBurstT <= 0 && this.fatigueT <= 0) {
             const rechargeRate = 0.22 + (this.type === 'runner' ? 0.08 : 0);
             this.sprintGauge = Math.min(1, this.sprintGauge + dt * rechargeRate);
+        }
+
+        // Обработка активного акробатического прыжка через реку
+        if (this.isJumping) {
+            this.jumpT += dt / this.jumpDur;
+            const p = Math.min(1, this.jumpT);
+            this.x = U.lerp(this.jumpStartX, this.jumpEndX, p);
+            this.y = U.lerp(this.jumpStartY, this.jumpEndY, p);
+            this.anim += dt * 32;
+            this.facing = (this.jumpEndX >= this.jumpStartX) ? 1 : -1;
+
+            if (p > 0.35 && p < 0.65 && Math.random() < dt * 9) {
+                if (g.fx) g.fx.dust(this.x, this.y, 1, 'rgba(186, 230, 253, 0.6)');
+            }
+
+            if (this.jumpT >= 1) {
+                this.isJumping = false;
+                this.x = this.jumpEndX;
+                this.y = this.jumpEndY;
+                this.jumpCd = U.rand(3.5, 5.2);
+
+                if (g.fx) {
+                    g.fx.dust(this.x, this.y + this.r * 0.5, 6, g.dustColor || '#d4b483');
+                    g.fx.ring(this.x, this.y + this.r * 0.4, 22, '#7dd3fc', 0.35, 3);
+                    const words = ['ХОП!', 'ВЖУХ!', 'ПЛЮХ!', 'ПРЫГ!'];
+                    const word = words[Math.floor(Math.random() * words.length)];
+                    g.fx.text(this.x, this.y - this.r - 20, word, { color: '#38bdf8', size: 15, life: 0.55 });
+                }
+                if (g.sfx) {
+                    if (g.sfx.splat) g.sfx.splat();
+                    else if (g.sfx.dash) g.sfx.dash();
+                }
+
+                this.state = 'panic';
+                this.vx = (this.facing > 0 ? 1 : -1) * this.def.panic * 0.85;
+                this.vy = 0;
+            }
+            return;
         }
 
         if (this.caught) {
@@ -256,6 +475,10 @@ class Pig {
         const pl = targetPlayer || g.player;
         const dpx = pl.x - this.x, dpy = pl.y - this.y, dPlayer = Math.hypot(dpx, dpy) || 1;
         let speedMul = (this.slow > 0 ? 0.5 : 1) * g.pigSpeedMul;
+        if (this.fatigueT > 0) {
+            // Замедление до 50-60% от нормальной скорости при истощении
+            speedMul *= 0.55;
+        }
         let moving = true;
 
         switch (this.state) {
@@ -393,7 +616,8 @@ class Pig {
                     // 3. Увороты и зигзаги (Evasive zig-zagging / Jinking)
                     const threatIsDashing = closestThreat && closestThreat.dashing;
                     const threatIsClose = closestThreatDist < (145 + iq * 40);
-                    if (threatIsClose || threatIsDashing) {
+                    // Истощенная свинья неповоротлива и не может делать резкие увороты/зигзаги
+                    if ((threatIsClose || threatIsDashing) && this.fatigueT <= 0) {
                         this.jinkTimer -= dt;
                         if (this.jinkTimer <= 0) {
                             this.jinkSide = -this.jinkSide;
@@ -502,8 +726,8 @@ class Pig {
                     const isCornered = (closestThreatDist < 80) ||
                                        (threatIsDashing && closestThreatDist < 125) ||
                                        ((wx !== 0 || wy !== 0) && closestThreatDist < 110);
-                    if (isCornered && this.sprintGauge >= 0.85 && this.sprintCd <= 0 && this.tired <= 0 && this.sprintBurstT <= 0) {
-                        this.sprintBurstT = 0.48;
+                    if (isCornered && this.sprintGauge >= 0.85 && this.sprintCd <= 0 && this.tired <= 0 && this.sprintBurstT <= 0 && this.fatigueT <= 0) {
+                        this.sprintBurstT = 0.50;
                         this.sprintGauge = 0;
                         this.sprintCd = this.sprintCooldownMax;
                         this.isSprinting = true;
@@ -540,6 +764,8 @@ class Pig {
                         v *= 1.62;
                         accel = 20;
                         if (Math.random() < dt * 15) g.fx.dust(this.x, this.y + this.r * 0.5, 1, g.dustColor);
+                    } else if (this.fatigueT > 0) {
+                        accel = 2.4; // Неповоротливый радиус разворота при истощении (sluggish turn rate)
                     } else {
                         accel = 7.5;
                     }
@@ -558,6 +784,12 @@ class Pig {
                         }
                     }
                     if (Math.random() < dt * 9) g.fx.dust(this.x - this.vx * 0.05, this.y + this.r * 0.6, 1, g.dustColor);
+
+                    // 6. Акробатический прыжок через реку при бегстве к противоположному берегу
+                    if (w.river && this.jumpCd <= 0) {
+                        const leaped = this.checkRiverJump(w, g, closestThreat, closestThreatDist, ax, ay, panic);
+                        if (leaped) return;
+                    }
                 } else {
                     // Спокойное блуждание (Wander) со стайным поведением (Flocking)
                     this.state = 'wander';
@@ -595,7 +827,7 @@ class Pig {
                         }
                         tvx = flX * d.speed; tvy = flY * d.speed;
                     }
-                    accel = 4;
+                    accel = this.fatigueT > 0 ? 2.0 : 4;
                 }
                 this.panicLevel = panic;
             }
@@ -612,7 +844,7 @@ class Pig {
         this.anim += dt * (4 + sp * 0.085);
         if (Math.abs(this.vx) > 12) this.facing = this.vx > 0 ? 1 : -1;
 
-        if (this.state !== 'escape') {
+        if (this.state !== 'escape' && !this.isJumping) {
             const hit = w.resolve(this, this.r * 0.8);
             if (hit) {
                 if (this.state === 'wander') { this.pickHeading(w); }
@@ -623,6 +855,79 @@ class Pig {
                 }
             }
         }
+    }
+
+    /**
+     * Проверка и инициация акробатического прыжка свиньи через реку
+     */
+    checkRiverJump(w, g, closestThreat, closestThreatDist, ax, ay, panic) {
+        if (!w || !w.river || !w.getRiverInfo || this.jumpCd > 0 || this.isJumping) return false;
+        if (this.caught || this.state === 'escape' || this.state === 'dizzy' || this.state === 'telegraph') return false;
+
+        // Не прыгаем, если свинья уже находится на мостике
+        if (w.isOnBridge(this.x, this.y, 24)) return false;
+
+        const rInfo = w.getRiverInfo(this.x, this.y);
+        if (!rInfo) return false;
+
+        // Расстояние до кромки воды (от -15 до 75px)
+        const dBank = rInfo.distToBank;
+        if (dBank < -15 || dBank > 75) return false;
+
+        // Проверяем направление бега в сторону противоположного берега
+        let headingTowardRiver = false;
+        let targetX = 0;
+
+        if (rInfo.bank === 'west') {
+            // Свинья на западном берегу, река на востоке
+            const threatPushing = closestThreat && (closestThreat.x < this.x + 35);
+            if (ax > 0.04 || this.vx > 8 || threatPushing || this.isSprinting) {
+                headingTowardRiver = true;
+                targetX = rInfo.rx + rInfo.rw * 0.5 + U.rand(28, 48);
+            }
+        } else {
+            // Свинья на восточном берегу, река на западе
+            const threatPushing = closestThreat && (closestThreat.x > this.x - 35);
+            if (ax < -0.04 || this.vx < -8 || threatPushing || this.isSprinting) {
+                headingTowardRiver = true;
+                targetX = rInfo.rx - rInfo.rw * 0.5 - U.rand(28, 48);
+            }
+        }
+
+        if (!headingTowardRiver) return false;
+
+        // Свинья должна быть в панике, спасаться от погони или бежать в спринте
+        const inPanic = (this.state === 'panic' || this.isSprinting || this.sprintBurstT > 0 || panic > 0.18 || closestThreatDist < 260);
+        if (!inPanic && Math.random() > 0.25) return false;
+
+        // Точка приземления с учетом вертикальной скорости и легкого разброса
+        const driftY = (this.vy || 0) * 0.28 + U.rand(-25, 25);
+        const targetY = U.clamp(this.y + driftY, w.margin + 45, w.h - w.margin - 45);
+
+        // Инициация прыжка
+        const leapDist = Math.hypot(targetX - this.x, targetY - this.y);
+        this.jumpStartX = this.x;
+        this.jumpStartY = this.y;
+        this.jumpEndX = targetX;
+        this.jumpEndY = targetY;
+        this.jumpDur = U.clamp(leapDist / 200, 0.65, 0.85);
+        this.jumpT = 0;
+        this.jumpArcH = Math.min(35, 22 + leapDist * 0.08);
+        this.isJumping = true;
+        this.facing = (targetX >= this.x) ? 1 : -1;
+
+        if (g.fx) {
+            g.fx.dust(this.x, this.y + this.r * 0.5, 4, g.dustColor || '#d4b483');
+            g.fx.ring(this.x, this.y + this.r * 0.4, 18, 'rgba(255,255,255,0.7)', 0.3, 2.5);
+            const cheer = (this.type === 'runner' || (this.def && this.def.ninja)) ? '🦘 ПРЫЖОК!' : '💨 ХОП!';
+            g.fx.text(this.x, this.y - this.r - 20, cheer, { color: '#fef08a', size: 15, life: 0.5 });
+        }
+        if (g.sfx) {
+            if (g.sfx.dash) g.sfx.dash();
+            else if (g.sfx.oink) g.sfx.oink();
+        }
+
+        return true;
     }
 
     pickHeading(w) {
@@ -652,6 +957,8 @@ class Pig {
         g.fx.smoke(this.x, this.y - 6, 12);
         this.stam = this.def.stamina;
         this.tired = 0;
+        this.fatigueT = 0;
+        this.isFatigued = false;
         this.sprintGauge = 1.0;
         this.sprintBurstT = 0;
         this.state = 'wander';
@@ -671,13 +978,24 @@ class Pig {
             sc *= 1 - e * 0.45;
             ctx.fillStyle = `rgba(20,40,20,${0.2 * (1 - e)})`;
             ctx.beginPath(); ctx.ellipse(x, y + 8, 14 * sc, 5 * sc, 0, 0, Math.PI * 2); ctx.fill();
+        } else if (this.isJumping) {
+            const jt = Math.min(1, Math.max(0, this.jumpT));
+            lift = Math.sin(Math.PI * jt) * this.jumpArcH;
+            const puff = 1 + Math.sin(Math.PI * jt) * 0.20;
+            sc *= puff;
+            rot = Math.sin(Math.PI * jt) * 0.28 * this.facing;
+            // Тень проецируется на поверхность земли / воды под свинкой
+            const shadowFade = 0.24 * (1 - 0.45 * (lift / this.jumpArcH));
+            const shadowR = Math.max(9, (19 - 4 * (lift / this.jumpArcH))) * d.scale;
+            ctx.fillStyle = `rgba(15, 30, 40, ${shadowFade})`;
+            ctx.beginPath(); ctx.ellipse(x, y + 13 * d.scale, shadowR, shadowR * 0.38, 0, 0, Math.PI * 2); ctx.fill();
         } else {
             ctx.fillStyle = 'rgba(20,40,20,0.22)';
             ctx.beginPath(); ctx.ellipse(x, y + 13 * sc, 19 * sc, 7 * sc, 0, 0, Math.PI * 2); ctx.fill();
         }
 
         const speed = Math.hypot(this.vx, this.vy);
-        const running = speed > 20 && !this.caught && this.frozen <= 0;
+        const running = (speed > 20 || this.isJumping) && !this.caught && this.frozen <= 0;
         const hop = running ? Math.abs(Math.sin(this.anim)) * (speed > 120 ? 4.5 : 2.2) : 0;
         const pop = this.spawnPop < 1 ? U.easeOutBack(this.spawnPop) : 1;
 
@@ -687,8 +1005,20 @@ class Pig {
         if (this.state === 'telegraph') shakeX = Math.sin(this.t * 70) * 2.5;
         if (this.state === 'dizzy') rot = Math.sin(this.t * 6) * 0.12;
         ctx.translate(shakeX, 0);
+
+        let squash = 1;
+        if (this.fatigueT > 0) {
+            // Быстрое запыхавшееся дыхание / одышка (panting animation)
+            const pant = Math.sin(this.pantingAnim);
+            squash = 1 + pant * 0.09;
+            rot += Math.sin(this.t * 8) * 0.05;
+        } else if (running) {
+            squash = 1 + Math.sin(this.anim * 2) * 0.05;
+        } else {
+            squash = 1 + Math.sin(this.t * 2.2) * 0.02;
+        }
+
         ctx.rotate(rot);
-        const squash = running ? 1 + Math.sin(this.anim * 2) * 0.05 : 1 + Math.sin(this.t * 2.2) * 0.02;
         ctx.scale(this.facing * sc * pop * (2 - squash), sc * pop * squash);
 
         this.drawBody(ctx, running, g);
@@ -704,8 +1034,8 @@ class Pig {
         if (this.hitFlash > 0) { body = '#ffffff'; dark = '#ffd0d0'; }
         if (this.enraged && this.hitFlash <= 0) { body = '#b5553c'; }
         const OUT = d.boss ? '#3a2214' : (d.ninja ? '#1c2026' : 'rgba(122,40,70,0.9)');
-        const walk = running ? Math.sin(this.anim) * 5 : 0;
-        const panic = this.state === 'panic' || this.state === 'burst' || this.state === 'escape';
+        const walk = this.isJumping ? Math.sin(this.t * 32) * 8.5 : (running ? Math.sin(this.anim) * 5 : 0);
+        const panic = this.state === 'panic' || this.state === 'burst' || this.state === 'escape' || this.isJumping;
 
         ctx.lineJoin = 'round'; ctx.lineCap = 'round';
         // Хвостик
@@ -738,7 +1068,7 @@ class Pig {
 
         // Уши
         ctx.fillStyle = dark; ctx.strokeStyle = OUT; ctx.lineWidth = 1.8;
-        const earW = panic ? -2 : Math.sin(this.t * 3 + this.seed) * 0.8;
+        const earW = this.fatigueT > 0 ? -4.5 : (panic ? -2 : Math.sin(this.t * 3 + this.seed) * 0.8);
         ctx.beginPath(); ctx.moveTo(4, -11); ctx.lineTo(8 + earW, -21); ctx.lineTo(12, -11); ctx.closePath(); ctx.fill(); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(9, -10); ctx.lineTo(15 + earW, -19); ctx.lineTo(17, -8); ctx.closePath(); ctx.fill(); ctx.stroke();
 
@@ -755,10 +1085,18 @@ class Pig {
         }
 
         // Глаз
-        const blink = (this.t + this.seed) % 3.7 < 0.1 && !panic;
+        const blink = (this.t + this.seed) % 3.7 < 0.1 && !panic && this.fatigueT <= 0;
         if (this.state === 'dizzy') {
             ctx.strokeStyle = '#1f1320'; ctx.lineWidth = 1.8;
             ctx.beginPath(); ctx.moveTo(8, -6.5); ctx.lineTo(13, -1.5); ctx.moveTo(13, -6.5); ctx.lineTo(8, -1.5); ctx.stroke();
+        } else if (this.fatigueT > 0) {
+            // Уставшие полуприкрытые глаза при истощении
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(10.5, -4, 3.2, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#1f1320';
+            ctx.beginPath(); ctx.arc(11.2, -3.6, 1.8, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = dark;
+            ctx.beginPath(); ctx.arc(10.5, -4, 3.4, Math.PI, Math.PI * 2); ctx.fill();
         } else if (blink) {
             ctx.strokeStyle = '#1f1320'; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(8, -4); ctx.lineTo(13, -4); ctx.stroke();
         } else {
@@ -779,8 +1117,18 @@ class Pig {
         ctx.beginPath(); ctx.ellipse(18.5, 1.5, 5, 6.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         ctx.fillStyle = 'rgba(90,20,40,0.8)';
         ctx.beginPath(); ctx.ellipse(19, -0.8, 1, 1.5, 0, 0, Math.PI * 2); ctx.ellipse(19, 3.8, 1, 1.5, 0, 0, Math.PI * 2); ctx.fill();
-        // Открытый рот в панике
-        if (panic) { ctx.fillStyle = '#7a1f3a'; ctx.beginPath(); ctx.ellipse(13.5, 8, 2.6, 2.2, 0, 0, Math.PI * 2); ctx.fill(); }
+        // Открытый рот в панике и при одышке
+        if (panic || this.fatigueT > 0) {
+            ctx.fillStyle = '#7a1f3a';
+            const mouthH = this.fatigueT > 0 ? (2.4 + Math.sin(this.pantingAnim) * 0.8) : 2.2;
+            ctx.beginPath(); ctx.ellipse(13.5, 8, 2.8, Math.max(1.2, mouthH), 0, 0, Math.PI * 2); ctx.fill();
+            if (this.fatigueT > 0) {
+                // Высунутый розовый язычок при одышке
+                ctx.fillStyle = '#fb7185';
+                const tongueY = 8.8 + Math.sin(this.pantingAnim) * 0.4;
+                ctx.beginPath(); ctx.ellipse(15.2, tongueY, 1.8, 1.3, 0.2, 0, Math.PI * 2); ctx.fill();
+            }
+        }
 
         // Клыки
         if (d.charger) {
@@ -819,7 +1167,23 @@ class Pig {
     drawOverhead(ctx, x, y, sc) {
         const top = y - 24 * sc;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        if (this.state === 'telegraph') {
+        if (this.fatigueT > 0) {
+            // Эффект капель пота 💦 над головой при истощении после рывка
+            const sweatBounce = Math.sin(this.t * 9) * 2.5;
+            ctx.font = `${Math.round(15 * sc)}px sans-serif`;
+            ctx.fillText('💦', x + 11 * this.facing * sc, top - 6 + sweatBounce);
+
+            // Анимированные маленькие капельки пота
+            ctx.fillStyle = '#60a5fa';
+            for (let i = 0; i < 2; i++) {
+                const ph = (this.t * 3.2 + i * 0.5) % 1;
+                ctx.globalAlpha = (1 - ph) * 0.85;
+                ctx.beginPath();
+                ctx.arc(x + (i === 0 ? -10 : 10) * sc, top - 2 + ph * 14 * sc, 2.2 * sc, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+        } else if (this.state === 'telegraph') {
             const k = 1 + Math.sin(this.t * 30) * 0.15;
             ctx.font = `900 ${Math.round(30 * k)}px "Nunito","Segoe UI",sans-serif`;
             ctx.lineWidth = 6; ctx.strokeStyle = '#ffffff'; ctx.strokeText('!', x, top - 12);
@@ -866,8 +1230,8 @@ class Pig {
             ctx.beginPath(); ctx.arc(x, top - 12, 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k); ctx.stroke();
         }
 
-        // Шкала спринта свиньи
-        if (this.state === 'panic' || this.sprintGauge < 0.98 || this.sprintBurstT > 0) {
+        // Шкала спринта свиньи и восстановление после истощения
+        if (this.state === 'panic' || this.sprintGauge < 0.98 || this.sprintBurstT > 0 || this.fatigueT > 0) {
             const gw = 26 * sc, gh = 3.2;
             const gx = x - gw / 2;
             const gy = y + (this.maxHp > 1 && !this.def.boss ? 34 : 20) * sc;
@@ -875,9 +1239,13 @@ class Pig {
             ctx.beginPath(); ctx.roundRect(gx - 1, gy - 1, gw + 2, gh + 2, 2); ctx.fill();
             let col = '#38bdf8';
             if (this.sprintBurstT > 0) col = '#ffdd00';
+            else if (this.fatigueT > 0) col = '#f43f5e'; // Красная шкала истощения
             else if (this.sprintGauge < 0.85) col = '#94a3b8';
             ctx.fillStyle = col;
-            ctx.beginPath(); ctx.roundRect(gx, gy, Math.max(0, gw * this.sprintGauge), gh, 1.5); ctx.fill();
+            const fillRatio = this.fatigueT > 0 ? (1 - this.fatigueT / this.fatigueDur) : this.sprintGauge;
+            ctx.beginPath(); ctx.roundRect(gx, gy, Math.max(0, gw * fillRatio), gh, 1.5); ctx.fill();
         }
     }
 }
+
+Pig.dispersionSeq = 0;

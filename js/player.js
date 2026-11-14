@@ -13,10 +13,16 @@ function drawFarmer(ctx, o) {
     ctx.fillStyle = 'rgba(20,40,20,0.25)';
     ctx.beginPath(); ctx.ellipse(0, 17, 16, 6.5, 0, 0, Math.PI * 2); ctx.fill();
 
-    const bob = o.moving ? Math.abs(Math.sin(o.walk)) * 3 : Math.sin(o.t * 2.4) * 0.8;
+    let bob = o.moving ? Math.abs(Math.sin(o.walk)) * (o.isSprinting ? 3.6 : 3) : Math.sin(o.t * 2.4) * 0.8;
+    if (o.isExhausted) {
+        // Запыхавшееся глубокое и частое дыхание
+        bob = o.moving ? (Math.abs(Math.sin(o.walk)) * 3.2 + Math.sin(o.t * 10) * 1.6) : Math.sin(o.t * 10) * 2.5;
+    }
     ctx.translate(0, -bob);
     if (o.stun > 0) ctx.rotate(Math.sin(o.t * 22) * 0.16);
     else if (o.dashing) ctx.rotate(0.28 * o.facing);
+    else if (o.isExhausted) ctx.rotate((0.11 + Math.sin(o.t * 10) * 0.05) * o.facing); // Усталый наклон вперед
+    else if (o.isSprinting) ctx.rotate(0.14 * o.facing); // Динамичный наклон при быстром спринте
     else if (o.moving) ctx.rotate(0.06 * o.facing);
     ctx.scale(o.facing, 1);
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
@@ -26,7 +32,7 @@ function drawFarmer(ctx, o) {
         ctx.fillStyle = o.hairColor || '#854d0e';
         ctx.strokeStyle = OUT;
         ctx.lineWidth = 1.8;
-        const braidBob = o.moving ? Math.sin(o.walk * 1.4) * 3.5 : Math.sin(o.t * 3.2) * 1.2;
+        const braidBob = o.moving ? Math.sin(o.walk * 1.4) * (o.isSprinting ? 4.8 : 3.5) : Math.sin(o.t * 3.2) * 1.2;
         // Задняя прическа
         ctx.beginPath();
         ctx.arc(0, -17, 11.5, Math.PI * 0.7, Math.PI * 2.3);
@@ -87,8 +93,22 @@ function drawFarmer(ctx, o) {
             ctx.moveTo(5.9, -18.6); ctx.lineTo(7.6, -19.2);
             ctx.stroke();
         }
-        ctx.strokeStyle = '#b5522b'; ctx.lineWidth = 1.7;
-        ctx.beginPath(); ctx.arc(3.5, -14, 3.6, 0.15, Math.PI * 0.8); ctx.stroke();
+        if (o.isExhausted) {
+            // Открытый запыхавшийся рот
+            ctx.fillStyle = '#b5522b';
+            ctx.beginPath(); ctx.ellipse(4.2, -13, 2.2, 3.0, 0, 0, Math.PI * 2); ctx.fill();
+            // Капелька пота на виске
+            ctx.fillStyle = '#38bdf8';
+            ctx.strokeStyle = '#0284c7';
+            ctx.lineWidth = 0.8;
+            const sweatBob = Math.sin(o.t * 10) * 1.2;
+            ctx.beginPath();
+            ctx.arc(8, -22 + sweatBob, 1.8, 0, Math.PI * 2);
+            ctx.fill(); ctx.stroke();
+        } else {
+            ctx.strokeStyle = '#b5522b'; ctx.lineWidth = 1.7;
+            ctx.beginPath(); ctx.arc(3.5, -14, 3.6, 0.15, Math.PI * 0.8); ctx.stroke();
+        }
     }
     // Румянец
     ctx.fillStyle = o.isFemale ? 'rgba(255,90,130,0.6)' : 'rgba(255,110,110,0.4)';
@@ -223,8 +243,10 @@ function drawHat(ctx, id, color) {
     }
 }
 
-// Глобальный трекер физических кодов клавиш для автономного ввода Player 1 и Player 2
+// Глобальный трекер физических кодов клавиш и тач-удерживания для Player 1 и Player 2
 const ACTIVE_KEYS = new Set();
+let TOUCH_DASH_HELD = false;
+
 if (typeof window !== 'undefined' && !window.__SVINOLOV_PLAYER_KEYS_ATTACHED__) {
     window.addEventListener('keydown', (e) => {
         ACTIVE_KEYS.add(e.code);
@@ -234,7 +256,24 @@ if (typeof window !== 'undefined' && !window.__SVINOLOV_PLAYER_KEYS_ATTACHED__) 
     }, { passive: true });
     window.addEventListener('blur', () => {
         ACTIVE_KEYS.clear();
+        TOUCH_DASH_HELD = false;
     });
+
+    const attachTouch = () => {
+        const btn = document.getElementById('btn-dash');
+        if (btn && !btn.__svTouchSprintBound__) {
+            btn.__svTouchSprintBound__ = true;
+            btn.addEventListener('touchstart', () => { TOUCH_DASH_HELD = true; }, { passive: true });
+            btn.addEventListener('touchend', () => { TOUCH_DASH_HELD = false; }, { passive: true });
+            btn.addEventListener('touchcancel', () => { TOUCH_DASH_HELD = false; }, { passive: true });
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attachTouch);
+    } else {
+        attachTouch();
+    }
+
     window.__SVINOLOV_PLAYER_KEYS_ATTACHED__ = true;
 }
 
@@ -283,6 +322,18 @@ class Player {
         this.inMud = false;
         this.stepT = 0;
 
+        // Спринт и выносливость (stamina)
+        this.sprintMax = 3.0;
+        this.sprintT = 3.0;
+        this.isSprinting = false;
+        this.isExhausted = false;
+        this.exhaustDelay = 0;
+        this.staminaBarAlpha = 0;
+        this.sprintTrailT = 0;
+        this.sprintDustT = 0;
+        this.sweatT = 0;
+        this.sprintTime = 0;
+
         // Визуальные отличия
         this.suit = opts.suit || (this.id === 2 ? '#0d9488' : '#3b82f6'); // бирюзовый для P2, синий для P1
         this.shirt = opts.shirt || (this.id === 2 ? '#fef08a' : '#f4f1e8'); // нежно-желтый / кремовый
@@ -308,6 +359,15 @@ class Player {
         this.targetY = undefined;
     }
 
+    /** Сброс параметров спринта и выносливости */
+    resetSprint() {
+        this.sprintT = this.sprintMax;
+        this.isSprinting = false;
+        this.isExhausted = false;
+        this.exhaustDelay = 0;
+        this.staminaBarAlpha = 0;
+    }
+
     /** Упаковка состояния игрока для отправки по сети */
     getNetworkState() {
         return {
@@ -320,6 +380,9 @@ class Player {
             moving: this.moving,
             dashing: this.dashT > 0,
             dashT: Math.round(this.dashT * 100) / 100,
+            sprinting: !!this.isSprinting,
+            sprintT: Math.round(this.sprintT * 10) / 10,
+            exhausted: !!this.isExhausted,
             swingT: Math.round(this.swingT * 100) / 100,
             stun: Math.round(this.stun * 100) / 100,
             score: this.score,
@@ -338,6 +401,9 @@ class Player {
         if (s.facing !== undefined) this.facing = s.facing;
         if (s.moving !== undefined) this.moving = s.moving;
         if (s.dashing && this.dashT <= 0) this.dashT = s.dashT || 0.15;
+        if (s.sprinting !== undefined) this.isSprinting = !!s.sprinting;
+        if (s.sprintT !== undefined) this.sprintT = s.sprintT;
+        if (s.exhausted !== undefined) this.isExhausted = !!s.exhausted;
         if (s.swingT > 0 && this.swingT <= 0) this.swing();
         if (s.stun !== undefined) this.stun = s.stun;
         if (s.score !== undefined) this.score = s.score;
@@ -362,6 +428,7 @@ class Player {
                 left: ['ArrowLeft'],
                 right: ['ArrowRight'],
                 dash: ['ShiftRight', 'Numpad0', 'KeyK'],
+                sprint: ['ShiftRight', 'Numpad0', 'KeyK'],
                 swing: ['Enter', 'NumpadEnter', 'Slash', 'KeyL']
             };
         }
@@ -373,6 +440,7 @@ class Player {
                 left: ['KeyA', 'ArrowLeft'],
                 right: ['KeyD', 'ArrowRight'],
                 dash: ['ShiftLeft', 'ShiftRight'],
+                sprint: ['ShiftLeft', 'ShiftRight'],
                 swing: ['Space']
             };
         }
@@ -382,6 +450,7 @@ class Player {
             left: ['KeyA'],
             right: ['KeyD'],
             dash: ['ShiftLeft'],
+            sprint: ['ShiftLeft'],
             swing: ['Space']
         };
     }
@@ -439,6 +508,33 @@ class Player {
         return { x, y };
     }
 
+    /** Проверка удержания клавиши/кнопки продолжительного спринта */
+    isSprintPressed(g) {
+        if (this.isRemote) return !!this.isSprinting;
+        const isOnline = g && (g.isOnline || (g.net && g.net.connected));
+        const touchPressed = TOUCH_DASH_HELD ||
+                             (typeof document !== 'undefined' && !!document.getElementById('btn-dash')?.classList.contains('pressed')) ||
+                             (g && g.input && !!g.input.dashHeld) ||
+                             !!this.sprintHeld || !!this.dashHeld;
+
+        if (this.isLocal && isOnline) {
+            return ACTIVE_KEYS.has('ShiftLeft') || ACTIVE_KEYS.has('ShiftRight') || ACTIVE_KEYS.has('Numpad0') || touchPressed;
+        }
+
+        if (this.id === 2) {
+            // Player 2: Right Shift / Numpad 0 / Key K (а также KeyM)
+            return ACTIVE_KEYS.has('ShiftRight') || ACTIVE_KEYS.has('Numpad0') || ACTIVE_KEYS.has('KeyK') || ACTIVE_KEYS.has('KeyM');
+        }
+
+        // Player 1: Left Shift / тач-кнопка (в соло-режиме также Right Shift / Num0)
+        const isCoop = g && (g.mode === 'coop' || g.player2);
+        let pressed = ACTIVE_KEYS.has('ShiftLeft') || touchPressed;
+        if (!isCoop) {
+            if (ACTIVE_KEYS.has('ShiftRight') || ACTIVE_KEYS.has('Numpad0')) pressed = true;
+        }
+        return pressed;
+    }
+
     isDashPressed(g) {
         if (this.isRemote) return false;
         const isOnline = g && (g.isOnline || (g.net && g.net.connected));
@@ -446,7 +542,7 @@ class Player {
             return ACTIVE_KEYS.has('ShiftLeft') || ACTIVE_KEYS.has('ShiftRight') || ACTIVE_KEYS.has('Numpad0');
         }
         if (this.id === 2) {
-            return ACTIVE_KEYS.has('ShiftRight') || ACTIVE_KEYS.has('Numpad0') || ACTIVE_KEYS.has('KeyK');
+            return ACTIVE_KEYS.has('ShiftRight') || ACTIVE_KEYS.has('Numpad0') || ACTIVE_KEYS.has('KeyK') || ACTIVE_KEYS.has('KeyM');
         }
         return ACTIVE_KEYS.has('ShiftLeft');
     }
@@ -472,7 +568,7 @@ class Player {
     }
 
     startDash(ix, iy) {
-        if (this.dashCdT > 0 || this.stun > 0) return false;
+        if (this.dashCdT > 0 || this.stun > 0 || this.isExhausted) return false;
         const l = Math.hypot(ix, iy);
         if (l > 0.2) { this.dashX = ix / l; this.dashY = iy / l; }
         else { this.dashX = this.aimX; this.dashY = this.aimY; }
@@ -494,6 +590,75 @@ class Player {
         if (this.swingBuf > 0) this.swingBuf -= dt;
 
         this.dashGauge = this.dashCdT > 0 ? Math.max(0, 1 - this.dashCdT / this.dashCd) : 1;
+
+        // Обработка механики продолжительного спринта и шкалы выносливости
+        const wantsSprint = this.isSprintPressed(g);
+
+        if (this.isExhausted) {
+            this.isSprinting = false;
+            // Задержка 1.2с перед началом регенерации выносливости
+            let regenDt = dt;
+            if (this.exhaustDelay > 0) {
+                const consumed = Math.min(this.exhaustDelay, dt);
+                this.exhaustDelay -= consumed;
+                regenDt = dt - consumed;
+            }
+
+            if (this.exhaustDelay <= 0 && regenDt > 0) {
+                // Регенерация с половинной скоростью 0.5x (базовая: sprintMax / 2.0 = 1.5/с, штрафная: 0.75/с)
+                const regenRate = 0.5 * (this.sprintMax / 2.0);
+                this.sprintT = Math.min(this.sprintMax, this.sprintT + regenRate * regenDt);
+                // Выход из состояния истощения при восстановлении минимум 25%
+                if (this.sprintT >= this.sprintMax * 0.25) {
+                    this.isExhausted = false;
+                }
+            }
+
+            // Визуал истощения: частицы капель пота
+            this.sweatT -= dt;
+            if (this.sweatT <= 0) {
+                this.sweatT = 0.16 + Math.random() * 0.12;
+                if (g && g.fx) {
+                    const sx = this.x + (this.facing > 0 ? 6 : -6) + (Math.random() - 0.5) * 8;
+                    const sy = this.y - 20 + (Math.random() - 0.5) * 6;
+                    g.fx.spawn({
+                        x: sx, y: sy,
+                        vx: (Math.random() - 0.5) * 22 + (this.facing * 10),
+                        vy: -18 - Math.random() * 22,
+                        life: 0.55,
+                        size: 3.2,
+                        color: ['#60a5fa', '#38bdf8', '#93c5fd'],
+                        type: 'circle',
+                        grav: 260,
+                        drag: 0.6,
+                        fade: true,
+                        shrink: true
+                    });
+                }
+            }
+        } else if (wantsSprint && this.sprintT > 0 && this.stun <= 0 && this.dashT <= 0) {
+            // Sustained Sprint: ускорение (+65%), расход за 3.0 секунды максимум
+            this.isSprinting = true;
+            this.sprintT = Math.max(0, this.sprintT - dt);
+            if (this.sprintT <= 0) {
+                this.sprintT = 0;
+                this.isSprinting = false;
+                this.isExhausted = true;
+                this.exhaustDelay = 1.2; // 1.2с штрафная задержка
+                if (g && g.fx) {
+                    g.fx.text(this.x, this.y - 36, '💦 ВЫДОХСЯ!', { color: '#f43f5e', size: 14, life: 0.9, vy: -30 });
+                }
+            }
+        } else {
+            // Частичное отпускание: быстрое восстановление до максимума (~2.0с без задержки)
+            this.isSprinting = false;
+            const regenRate = this.sprintMax / 2.0;
+            this.sprintT = Math.min(this.sprintMax, this.sprintT + regenRate * dt);
+        }
+
+        // Плавное затухание полоски выносливости при 100% полном заряде
+        const targetStaminaAlpha = (this.sprintT < this.sprintMax - 0.001 || this.isSprinting || this.isExhausted) ? 1.0 : 0.0;
+        this.staminaBarAlpha += (targetStaminaAlpha - this.staminaBarAlpha) * Math.min(1, 10 * dt);
 
         for (let i = this.trail.length - 1; i >= 0; i--) {
             this.trail[i].life -= dt;
@@ -522,8 +687,15 @@ class Player {
                     this.trail.push({ x: this.x, y: this.y, life: 0.26, facing: this.facing, walk: this.walk });
                     this.trailT = 0.028;
                 }
+            } else if (this.isSprinting && this.moving) {
+                this.sprintTrailT -= dt;
+                if (this.sprintTrailT <= 0) {
+                    this.sprintTrailT = 0.055;
+                    this.trail.push({ x: this.x, y: this.y, life: 0.18, facing: this.facing, walk: this.walk, isSprint: true });
+                }
             }
-            if (this.moving) this.walk += dt * (this.dashT > 0 ? 26 : 13);
+            const walkSpeed = this.dashT > 0 ? 26 : (this.isSprinting ? 21.5 : 13);
+            if (this.moving) this.walk += dt * walkSpeed;
             w.resolve(this, this.r);
             return;
         }
@@ -547,7 +719,8 @@ class Player {
         } else {
             let l = Math.hypot(ix, iy);
             if (l > 1) { ix /= l; iy /= l; l = 1; }
-            let sp = this.speed * (g.buffs && g.buffs.speed > 0 ? 1.45 : 1) * (this.inMud ? 0.5 : 1) * this.highFiveBoost;
+            const sprintMult = this.isSprinting ? 1.65 : 1.0;
+            let sp = this.speed * sprintMult * (g.buffs && g.buffs.speed > 0 ? 1.45 : 1) * (this.inMud ? 0.5 : 1) * this.highFiveBoost;
             const k = Math.min(1, 16 * dt);
             this.vx += (ix * sp - this.vx) * k; this.vy += (iy * sp - this.vy) * k;
             this.moving = l > 0.12;
@@ -555,14 +728,44 @@ class Player {
                 this.aimX = ix / l; this.aimY = iy / l;
                 this.stepT -= dt;
                 if (this.stepT <= 0) {
-                    this.stepT = this.inMud ? 0.14 : 0.2;
-                    g.fx.dust(this.x, this.y + 16, 1, this.inMud ? 'rgba(92,61,33,0.8)' : g.dustColor);
+                    this.stepT = this.inMud ? 0.14 : (this.isSprinting ? 0.12 : 0.2);
+                    if (g && g.fx) {
+                        g.fx.dust(this.x, this.y + 16, 1, this.inMud ? 'rgba(92,61,33,0.8)' : g.dustColor);
+                    }
+                }
+
+                // Частицы бега при спринте: клубы пыли и тонкий скоростной шлейф
+                if (this.isSprinting) {
+                    this.sprintDustT -= dt;
+                    if (this.sprintDustT <= 0) {
+                        this.sprintDustT = 0.07;
+                        if (g && g.fx) {
+                            g.fx.dust(this.x + (Math.random() - 0.5) * 8, this.y + 15, 1, this.inMud ? 'rgba(92,61,33,0.8)' : (g.dustColor || 'rgba(255,255,255,0.7)'));
+                        }
+                    }
+
+                    this.sprintTrailT -= dt;
+                    if (this.sprintTrailT <= 0) {
+                        this.sprintTrailT = 0.055;
+                        this.trail.push({
+                            x: this.x, y: this.y, life: 0.18, facing: this.facing, walk: this.walk, isSprint: true
+                        });
+                    }
+
+                    // Трекинг общего времени бега
+                    this.sprintTime = (this.sprintTime || 0) + dt;
+                    if (g && g.storage && g.storage.sprintTimeTotal !== undefined) {
+                        g.storage.sprintTimeTotal += dt;
+                    }
                 }
             }
         }
 
         this.x += this.vx * dt; this.y += this.vy * dt;
-        if (this.moving) this.walk += dt * (this.dashT > 0 ? 26 : 13);
+        if (this.moving) {
+            const walkSpeed = this.dashT > 0 ? 26 : (this.isSprinting ? 21.5 : 13);
+            this.walk += dt * walkSpeed;
+        }
         if (Math.abs(this.vx) > 20) this.facing = this.vx > 0 ? 1 : -1;
 
         // Коллизии с картой
@@ -619,6 +822,98 @@ class Player {
         } else {
             this.inSynergy = false;
         }
+    }
+
+    /**
+     * Отрисовка аккуратной капсульной шкалы выносливости прямо под ногами игрока:
+     * - Плавное затухание при 100% заполнении
+     * - Пульсирующий красный при истощении
+     * - Золотой/желтый при низком уровне
+     * - Циан/зеленый при активности и регенерации
+     */
+    drawStaminaBar(ctx) {
+        if (this.staminaBarAlpha <= 0.01) return;
+
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, this.staminaBarAlpha));
+
+        const barW = 34;
+        const barH = 6;
+        const barX = this.x - barW / 2;
+        const barY = this.y + 24;
+        const r = barH / 2;
+
+        const pct = Math.max(0, Math.min(1, this.sprintT / this.sprintMax));
+
+        // Фоновая темная капсула
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, barW, barH, r);
+        ctx.fill();
+
+        // Цвета и эффекты по состояниям
+        let fillColor;
+        let strokeColor = 'rgba(255, 255, 255, 0.25)';
+        let lineWidth = 1;
+
+        if (this.isExhausted) {
+            // Красный / пульсирующий при истощении
+            const pulse = 0.55 + 0.45 * Math.sin(this.t * 14);
+            fillColor = `rgba(239, 68, 68, ${0.75 + 0.25 * pulse})`;
+            strokeColor = `rgba(244, 63, 94, ${pulse})`;
+            lineWidth = 1.5;
+            ctx.shadowColor = '#ef4444';
+            ctx.shadowBlur = 6 * pulse;
+        } else if (pct <= 0.30) {
+            // Желтый / золотой при малом запасе
+            fillColor = '#fbbf24';
+            strokeColor = 'rgba(251, 191, 36, 0.6)';
+            ctx.shadowColor = '#f59e0b';
+            ctx.shadowBlur = 4;
+        } else if (this.isSprinting) {
+            // Зеленый / циан при активном спринте
+            fillColor = this.id === 2 ? '#2dd4bf' : '#00f5d4';
+            strokeColor = this.id === 2 ? '#14b8a6' : '#06b6d4';
+            ctx.shadowColor = fillColor;
+            ctx.shadowBlur = 5;
+        } else {
+            // Зеленый / циан при обычной регенерации
+            fillColor = this.id === 2 ? '#14b8a6' : '#10b981';
+            strokeColor = 'rgba(16, 185, 129, 0.5)';
+        }
+
+        // Обводка капсулы
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = lineWidth;
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, barW, barH, r);
+        ctx.stroke();
+
+        // Внутреннее заполнение выносливости
+        const pad = 1.2;
+        const maxFillW = barW - pad * 2;
+        const fillW = maxFillW * pct;
+
+        if (fillW > 0.5) {
+            const innerH = barH - pad * 2;
+            const innerR = Math.min(innerH / 2, fillW / 2);
+            ctx.fillStyle = fillColor;
+            ctx.beginPath();
+            ctx.roundRect(barX + pad, barY + pad, fillW, innerH, innerR);
+            ctx.fill();
+        }
+
+        // Засечка порога 25% (порог разблокировки спринта при выходе из истощения)
+        const markX = barX + pad + maxFillW * 0.25;
+        ctx.strokeStyle = this.isExhausted ? 'rgba(255, 255, 255, 0.7)' : 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(markX, barY + 1);
+        ctx.lineTo(markX, barY + barH - 1);
+        ctx.stroke();
+
+        ctx.restore();
     }
 
     draw(ctx, g) {
@@ -699,12 +994,12 @@ class Player {
             ctx.restore();
         }
 
-        // Шлейф рывка
+        // Шлейф рывка и спринта
         for (const tr of this.trail) {
             drawFarmer(ctx, {
                 x: tr.x, y: tr.y, facing: tr.facing, walk: tr.walk, moving: true, t: 0,
                 suit: this.trailColor, shirt: '#e0f2fe', hat: this.hat, swingK: -1,
-                alpha: tr.life * 1.6, stun: 0, isFemale: this.isFemale, hairColor: this.hairColor
+                alpha: tr.isSprint ? tr.life * 1.1 : tr.life * 1.6, stun: 0, isFemale: this.isFemale, hairColor: this.hairColor
             });
         }
 
@@ -716,14 +1011,18 @@ class Player {
             suit: currentSuit, shirt: this.shirt, netColor: this.netColor, hat: this.hat,
             stun: this.stun, dashing: this.dashT > 0,
             swingK: this.swingT > 0 ? 1 - this.swingT / this.swingDur : -1,
-            alpha: blink ? 0.55 : 1, isFemale: this.isFemale, hairColor: this.hairColor
+            alpha: blink ? 0.55 : 1, isFemale: this.isFemale, hairColor: this.hairColor,
+            isExhausted: this.isExhausted, isSprinting: this.isSprinting
         });
+
+        // Аккуратная капсульная полоска выносливости под ногами (stamina bar)
+        this.drawStaminaBar(ctx);
 
         // Индикатор перезарядки рывка (полоска под ногами)
         if (this.dashCdT > 0) {
             const k = 1 - this.dashCdT / this.dashCd;
-            ctx.fillStyle = 'rgba(30,20,10,0.55)'; ctx.beginPath(); ctx.roundRect(this.x - 15, this.y + 26, 30, 6, 3); ctx.fill();
-            ctx.fillStyle = this.trailColor; ctx.beginPath(); ctx.roundRect(this.x - 14, this.y + 27, 28 * k, 4, 2); ctx.fill();
+            ctx.fillStyle = 'rgba(30,20,10,0.55)'; ctx.beginPath(); ctx.roundRect(this.x - 15, this.y + 32, 30, 4.5, 2.25); ctx.fill();
+            ctx.fillStyle = this.trailColor; ctx.beginPath(); ctx.roundRect(this.x - 14, this.y + 32.5, 28 * k, 3.5, 1.75); ctx.fill();
         }
 
         // Значок игрока (P1 / P2) в режиме коопа

@@ -66,6 +66,15 @@ const LEADERBOARD_CRITERIA = [
         col: '3★ Дней',
         fmt: (v) => `${v} ⭐`,
         desc: 'Дней с безупречным уловом всех свиней'
+    },
+    {
+        id: 'battleWins',
+        icon: '⚔️',
+        title: '1v1 Победы',
+        header: 'По победам в битвах 1v1',
+        col: 'Побед',
+        fmt: (v) => `${v} ⚔️`,
+        desc: 'Побед в состязаниях ловцов по сети'
     }
 ];
 
@@ -79,81 +88,6 @@ const LEADERBOARD_HATS = {
     crown: { name: 'Корона', icon: '👑' }
 };
 
-const RIVALS_BASE = [
-    {
-        id: 'mitya', name: 'Дед Митяй', farm: 'Хутор «Старый хряк»', hat: 'straw', avatar: '👴',
-        title: 'Сельский ветеран',
-        base: { prestige: 2, totalCoins: 3800, coins: 420, bestDay: 19, totalPigs: 280, bestCombo: 9, perfectDays: 8 },
-        growth: { prestige: 0.8, totalCoins: 0.85, coins: 0.5, bestDay: 0.6, totalPigs: 0.8, bestCombo: 0.2, perfectDays: 0.5 }
-    },
-    {
-        id: 'glasha', name: 'Фермерша Глаша', farm: 'Усадьба «Розовая хрюшка»', hat: 'cap', avatar: '👩‍🌾',
-        title: 'Перфекционистка',
-        base: { prestige: 1, totalCoins: 2900, coins: 310, bestDay: 15, totalPigs: 210, bestCombo: 11, perfectDays: 10 },
-        growth: { prestige: 0.6, totalCoins: 0.75, coins: 0.6, bestDay: 0.7, totalPigs: 0.7, bestCombo: 0.3, perfectDays: 0.7 }
-    },
-    {
-        id: 'vasya', name: 'Дядя Вася с мельницы', farm: 'Мельничный хутор', hat: 'chef', avatar: '👨‍🍳',
-        title: 'Купец-мельник',
-        base: { prestige: 1, totalCoins: 4200, coins: 850, bestDay: 12, totalPigs: 160, bestCombo: 7, perfectDays: 5 },
-        growth: { prestige: 0.5, totalCoins: 1.1, coins: 0.9, bestDay: 0.4, totalPigs: 0.5, bestCombo: 0.1, perfectDays: 0.4 }
-    },
-    {
-        id: 'bob', name: 'Ковбой Боб', farm: 'Ранчо «Золотое копытце»', hat: 'cowboy', avatar: '🤠',
-        title: 'Гроза прерий',
-        base: { prestige: 1, totalCoins: 2400, coins: 260, bestDay: 14, totalPigs: 190, bestCombo: 16, perfectDays: 6 },
-        growth: { prestige: 0.7, totalCoins: 0.7, coins: 0.4, bestDay: 0.5, totalPigs: 0.7, bestCombo: 0.4, perfectDays: 0.5 }
-    },
-    {
-        id: 'dusya', name: 'Баба Дуся', farm: 'Хутор «Пятачок и К°»', hat: 'straw', avatar: '👵',
-        title: 'Добрая бабушка',
-        base: { prestige: 0, totalCoins: 750, coins: 80, bestDay: 7, totalPigs: 130, bestCombo: 5, perfectDays: 3 },
-        growth: { prestige: 0.3, totalCoins: 0.4, coins: 0.2, bestDay: 0.3, totalPigs: 0.5, bestCombo: 0.1, perfectDays: 0.3 }
-    },
-    {
-        id: 'fedot', name: 'Хитрый Федот', farm: 'Заимка «У дуба»', hat: 'cap', avatar: '🧔',
-        title: 'Сельский ростовщик',
-        base: { prestige: 0, totalCoins: 1100, coins: 390, bestDay: 8, totalPigs: 85, bestCombo: 6, perfectDays: 2 },
-        growth: { prestige: 0.3, totalCoins: 0.5, coins: 0.7, bestDay: 0.35, totalPigs: 0.4, bestCombo: 0.15, perfectDays: 0.25 }
-    },
-    {
-        id: 'semen', name: 'Свинопас Семён', farm: 'Загон «Быстрый шницель»', hat: 'straw', avatar: '🧑‍🌾',
-        title: 'Шустрый пастух',
-        base: { prestige: 0, totalCoins: 480, coins: 50, bestDay: 5, totalPigs: 95, bestCombo: 8, perfectDays: 1 },
-        growth: { prestige: 0.2, totalCoins: 0.35, coins: 0.15, bestDay: 0.25, totalPigs: 0.45, bestCombo: 0.25, perfectDays: 0.2 }
-    },
-    {
-        id: 'lukich', name: 'Пасечник Лукич', farm: 'Пасека «Сладкая поляна»', hat: 'straw', avatar: '🧔‍♂️',
-        title: 'Миролюбивый сосед',
-        base: { prestige: 0, totalCoins: 1350, coins: 180, bestDay: 10, totalPigs: 140, bestCombo: 7, perfectDays: 4 },
-        growth: { prestige: 0.4, totalCoins: 0.5, coins: 0.3, bestDay: 0.4, totalPigs: 0.5, bestCombo: 0.15, perfectDays: 0.35 }
-    },
-    {
-        id: 'stepan', name: 'Агроном Степан', farm: 'Агрокомплекс «Заря»', hat: 'cap', avatar: '👨‍🌾',
-        title: 'Ударник труда',
-        base: { prestige: 1, totalCoins: 2600, coins: 290, bestDay: 18, totalPigs: 220, bestCombo: 8, perfectDays: 8 },
-        growth: { prestige: 0.6, totalCoins: 0.65, coins: 0.4, bestDay: 0.65, totalPigs: 0.65, bestCombo: 0.2, perfectDays: 0.6 }
-    },
-    {
-        id: 'olaf', name: 'Викинг Олаф', farm: 'Фьорд «Дикий вепрь»', hat: 'viking', avatar: '🛡️',
-        title: 'Северный богатырь',
-        base: { prestige: 3, totalCoins: 6200, coins: 920, bestDay: 24, totalPigs: 390, bestCombo: 14, perfectDays: 12 },
-        growth: { prestige: 1.1, totalCoins: 1.0, coins: 0.6, bestDay: 0.75, totalPigs: 0.9, bestCombo: 0.3, perfectDays: 0.6 }
-    },
-    {
-        id: 'bella', name: 'Баронесса Белла', farm: 'Поместье «Трюфель-Холл»', hat: 'crown', avatar: '👸',
-        title: 'Свиноводческая элита',
-        base: { prestige: 4, totalCoins: 9800, coins: 1600, bestDay: 30, totalPigs: 520, bestCombo: 15, perfectDays: 20 },
-        growth: { prestige: 1.3, totalCoins: 1.3, coins: 0.8, bestDay: 0.8, totalPigs: 1.0, bestCombo: 0.25, perfectDays: 0.8 }
-    },
-    {
-        id: 'lee', name: 'Ниндзя Ли', farm: 'Скрытый загон «Тень»', hat: 'pig', avatar: '🥷',
-        title: 'Мастер маскировки',
-        base: { prestige: 1, totalCoins: 2100, coins: 210, bestDay: 13, totalPigs: 180, bestCombo: 20, perfectDays: 7 },
-        growth: { prestige: 0.6, totalCoins: 0.6, coins: 0.3, bestDay: 0.45, totalPigs: 0.6, bestCombo: 0.45, perfectDays: 0.4 }
-    }
-];
-
 /**
  * Интерфейс поверх холста: HUD, титул, итоги дня, магазин, пауза, топ игроков, тач-управление.
  */
@@ -166,21 +100,27 @@ class UI {
             timer: $('hud-timer'), fill: $('timer-fill'), secs: $('timer-secs'),
             coinChip: $('chip-coins'), coins: $('hud-coins'),
             btnShop: $('btn-shop'), btnPause: $('btn-pause'), btnLeaderboard: $('btn-leaderboard'),
+            btnFullscreen: $('btn-fullscreen'), titleFullscreen: $('title-fullscreen'), pauseFullscreen: $('pause-fullscreen'),
             toasts: $('toasts'), banner: $('banner'), bannerTitle: $('banner-title'), bannerSub: $('banner-sub'),
             title: $('title-screen'), titlePlay: $('title-play'), titleShop: $('title-shop'),
-            titleLeaderboard: $('title-leaderboard'), titleMode: $('title-mode'),
+            titleLeaderboard: $('title-leaderboard'), titleMode: $('title-mode'), titleModeWrap: $('title-mode-wrap'),
+            titleModeDual: $('title-mode-dual'), titleModeSolo: $('title-mode-solo'), titleModeCoop: $('title-mode-coop'),
             titleModeText: $('title-mode-text'), titleModeIcon: $('title-mode-icon'),
             titleStats: $('title-stats'), helpSolo: $('help-solo'), helpCoop: $('help-coop'),
             result: $('result'), resTitle: $('res-title'), resStars: $('res-stars'), resCaught: $('res-caught'),
+            resCoopCard: $('res-coop-card'), resP1Caught: $('res-p1-caught'), resP2Caught: $('res-p2-caught'),
+            resP1Coins: $('res-p1-coins'), resP2Coins: $('res-p2-coins'),
+            resP1Badge: $('res-p1-badge'), resP2Badge: $('res-p2-badge'), resCoopCombo: $('res-coop-combo'),
             resLines: $('res-lines'), resQuest: $('res-quest'), resEarned: $('res-earned'), resCombo: $('res-combo'),
-            resPrestige: $('res-prestige'), resNext: $('res-next'), resShop: $('res-shop'),
+            resPrestige: $('res-prestige'), resNext: $('res-next'), resShop: $('res-shop'), resMenuBtn: $('res-menu-btn'),
             shop: $('shop-modal'), shopClose: $('shop-close'),
             pause: $('pause-modal'), pauseResume: $('pause-resume'), pauseSound: $('pause-sound'),
-            pauseMusic: $('pause-music'), pauseReset: $('pause-reset'),
-            pauseLeaderboard: $('pause-leaderboard'), pauseMode: $('pause-mode'),
+            pauseMusic: $('pause-music'), pauseReset: $('pause-reset'), pauseMenuBtn: $('pause-menu-btn'),
+            pauseLeaderboard: $('pause-leaderboard'), pauseMode: $('pause-mode'), pauseSwitchSolo: $('pause-switch-solo'),
             pauseHelpSolo: $('pause-help-solo'), pauseHelpCoop: $('pause-help-coop'),
             touch: $('touch-ui'), joyZone: $('joy-zone'), joyBase: $('joy-base'), joyStick: $('joy-stick'),
             btnSwing: $('btn-swing'), btnDash: $('btn-dash'),
+            btnHudSoloSwitch: $('btn-hud-solo-switch'), hudCoopToSolo: $('hud-coop-to-solo'),
             // Co-op элементы
             coopBar: $('hud-coop-bar'),
             hudP1Caught: $('hud-p1-caught'), hudP1Coins: $('hud-p1-coins'), hudP1Dash: $('hud-p1-dash'),
@@ -195,6 +135,7 @@ class UI {
             onlineModal: $('online-modal'), onlineClose: $('online-close'),
             titleOnline: $('title-online'), pauseOnline: $('pause-online'),
             tabHost: $('tab-host'), tabJoin: $('tab-join'),
+            btnModeCoop: $('btn-mode-coop'), btnModeBattle: $('btn-mode-battle'),
             contentHost: $('content-host'), contentJoin: $('content-join'),
             hostCodeDisplay: $('host-code-display'), btnCopyCode: $('btn-copy-code'), btnCopyLink: $('btn-copy-link'),
             btnStartHost: $('btn-start-host'), hostStatusBox: $('host-status-box'),
@@ -202,12 +143,29 @@ class UI {
             joinCodeInput: $('join-code-input'), btnJoinRoom: $('btn-join-room'),
             joinStatusBox: $('join-status-box'), joinStatusText: $('join-status-text'),
             hudOnlineChip: $('hud-online-chip'), hudOnlineRole: $('hud-online-role'),
-            hudOnlineCode: $('hud-online-code')
+            hudOnlineCode: $('hud-online-code'),
+            // 1v1 Battle HUD & Result Modal
+            hudBattleBar: $('hud-battle-bar'),
+            battleTimerSecs: $('battle-timer-secs'),
+            battleP1Score: $('battle-p1-score'), battleP2Score: $('battle-p2-score'),
+            battleP1Name: $('battle-p1-name'), battleP2Name: $('battle-p2-name'),
+            battleResultModal: $('battle-result-modal'),
+            battleResultIcon: $('battle-result-icon'),
+            battleResultTitle: $('battle-result-title'),
+            battleResultDesc: $('battle-result-desc'),
+            battleResCardP1: $('battle-res-card-p1'), battleResCardP2: $('battle-res-card-p2'),
+            battleResNameP1: $('battle-res-name-p1'), battleResNameP2: $('battle-res-name-p2'),
+            battleResScoreP1: $('battle-res-score-p1'), battleResScoreP2: $('battle-res-score-p2'),
+            battleResBadgeP1: $('battle-res-badge-p1'), battleResBadgeP2: $('battle-res-badge-p2'),
+            battleRewardText: $('battle-reward-text'),
+            battleStatsSummary: $('battle-stats-summary'),
+            btnBattleRematch: $('btn-battle-rematch'), btnBattleExit: $('btn-battle-exit')
         };
 
         this.shop = new Shop(game, this);
         this.lbCriteria = 'prestige';
         this.onlineTab = 'host';
+        this.selectedOnlineMode = 'coop';
         this.currentRoomCode = '';
         this._hc = {};                 // кэш HUD
         this._coinRect = null;
@@ -217,6 +175,14 @@ class UI {
         this._timers = [];
         this._toastCount = 0;
 
+        if (this.isMobileDevice()) {
+            document.body.classList.add('touch');
+        }
+
+        if (this.game && typeof this.game.returnToTitle !== 'function') {
+            this.game.returnToTitle = () => this.returnToTitle();
+        }
+
         this._bindButtons();
         this._bindKeys();
         this._bindTouch();
@@ -225,21 +191,81 @@ class UI {
         window.addEventListener('orientationchange', () => { this._coinRect = null; });
     }
 
+    returnToTitle() {
+        if (this.game && typeof this.game.returnToTitle === 'function' && this.game.returnToTitle !== this._boundReturnToTitle) {
+            try {
+                this.game.returnToTitle();
+                return;
+            } catch (err) {
+                console.error('Error calling game.returnToTitle:', err);
+            }
+        }
+        try { if (this.game) this.game.persist(); } catch (err) {}
+        if (this.game && this.game.network && typeof this.game.network.disconnect === 'function') {
+            try { this.game.network.disconnect(); } catch (err) {}
+        }
+        this.hideResult();
+        this.hidePause();
+        if (typeof this.hideBattleResult === 'function') this.hideBattleResult();
+        if (this.shop && this.shop.isOpen) this.shop.close(true);
+        if (this.isLeaderboardOpen) this.hideLeaderboard();
+        if (this.isOnlineOpen) this.hideOnline();
+        if (this.game && typeof this.game.enterTitle === 'function') {
+            this.game.enterTitle();
+        } else {
+            this.showTitle();
+        }
+    }
+
     /* ============================================================
-     *  Состояние окон
+     *  Состояние окон и устройство
      * ============================================================ */
     _vis(el) { return el && !el.classList.contains('hidden'); }
 
     get modalOpen() {
-        return this._vis(this.el.title) || this._vis(this.el.result) || this.shop.isOpen || this._vis(this.el.pause) || this.isLeaderboardOpen || this.isOnlineOpen;
+        return this._vis(this.el.title) || this._vis(this.el.result) || this.shop.isOpen || this._vis(this.el.pause) || this.isLeaderboardOpen || this.isOnlineOpen || this.isBattleResultOpen;
+    }
+
+    get isBattleResultOpen() {
+        return this._vis(this.el.battleResultModal);
     }
 
     _syncPause() {
-        const need = this.shop.isOpen || this._vis(this.el.pause) || this.isLeaderboardOpen || this.isOnlineOpen;
+        const need = this.shop.isOpen || this._vis(this.el.pause) || this.isLeaderboardOpen || this.isOnlineOpen || this.isBattleResultOpen;
         if (need === this._pausedByUi) return;
         this._pausedByUi = need;
         if (need) this._resetTouchInput();
         this.game.setPaused(need);
+    }
+
+    isMobileDevice() {
+        return (
+            ('ontouchstart' in window) ||
+            (navigator.maxTouchPoints > 0) ||
+            (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+        );
+    }
+
+    toggleFullscreen() {
+        try {
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                const el = document.documentElement;
+                if (el.requestFullscreen) {
+                    el.requestFullscreen().catch(() => {});
+                } else if (el.webkitRequestFullscreen) {
+                    el.webkitRequestFullscreen();
+                }
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen().catch(() => {});
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
+                }
+            }
+        } catch (e) {
+            console.warn('[UI] Fullscreen toggle error:', e);
+        }
     }
 
     /* ============================================================
@@ -250,6 +276,21 @@ class UI {
         const sfx = () => this.game.sfx;
         const initAudio = () => { try { sfx().init(); } catch (err) { /* звук необязателен */ } };
         ['pointerdown', 'touchend', 'keydown'].forEach((t) => document.addEventListener(t, initAudio, true));
+
+        // Полноэкранный режим
+        const toggleFs = () => this.toggleFullscreen();
+        if (e.btnFullscreen) e.btnFullscreen.addEventListener('click', toggleFs);
+        if (e.titleFullscreen) e.titleFullscreen.addEventListener('click', toggleFs);
+        if (e.pauseFullscreen) e.pauseFullscreen.addEventListener('click', toggleFs);
+
+        const onFsChange = () => {
+            const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+            if (e.btnFullscreen) e.btnFullscreen.textContent = isFs ? '🗗' : '⛶';
+            if (e.titleFullscreen) e.titleFullscreen.textContent = isFs ? '🗗' : '⛶';
+            if (e.pauseFullscreen) e.pauseFullscreen.textContent = isFs ? '🗗 Оконный режим' : '⛶ Полный экран';
+        };
+        document.addEventListener('fullscreenchange', onFsChange);
+        document.addEventListener('webkitfullscreenchange', onFsChange);
 
         // Звук клика на любой кнопке, кроме помеченных data-silent
         document.addEventListener('click', (ev) => {
@@ -264,7 +305,9 @@ class UI {
         e.shopClose.addEventListener('click', () => this.closeShop());
         e.resShop.addEventListener('click', () => this.openShop());
         e.resNext.addEventListener('click', () => this._resultMain());
+        if (e.resMenuBtn) e.resMenuBtn.addEventListener('click', () => this.returnToTitle());
         e.pauseResume.addEventListener('click', () => this.closePause());
+        if (e.pauseMenuBtn) e.pauseMenuBtn.addEventListener('click', () => this.returnToTitle());
         e.pauseSound.addEventListener('click', () => { this.game.toggleMute(); this._syncToggles(); });
         e.pauseMusic.addEventListener('click', () => { this.game.toggleMusic(); this._syncToggles(); });
         e.pauseReset.addEventListener('click', () => {
@@ -289,8 +332,16 @@ class UI {
         }
 
         // Переключение режима игры (1 Игрок / 2 Игрока Кооп)
+        if (e.titleModeSolo) e.titleModeSolo.addEventListener('click', () => this.setGameMode('solo'));
+        if (e.titleModeCoop) e.titleModeCoop.addEventListener('click', () => this.setGameMode('coop'));
         if (e.titleMode) e.titleMode.addEventListener('click', () => this.toggleGameMode());
         if (e.pauseMode) e.pauseMode.addEventListener('click', () => this.toggleGameMode());
+        if (e.pauseSwitchSolo) e.pauseSwitchSolo.addEventListener('click', () => {
+            this.setGameMode('solo');
+            this.closePause();
+        });
+        if (e.hudCoopToSolo) e.hudCoopToSolo.addEventListener('click', () => this.setGameMode('solo'));
+        if (e.btnHudSoloSwitch) e.btnHudSoloSwitch.addEventListener('click', () => this.setGameMode('solo'));
 
         // Онлайн мультиплеер кнопки
         if (e.titleOnline) e.titleOnline.addEventListener('click', () => this.openOnlineModal('host'));
@@ -298,6 +349,23 @@ class UI {
         if (e.onlineClose) e.onlineClose.addEventListener('click', () => this.closeOnlineModal());
         if (e.tabHost) e.tabHost.addEventListener('click', () => this.setOnlineTab('host'));
         if (e.tabJoin) e.tabJoin.addEventListener('click', () => this.setOnlineTab('join'));
+
+        // Режим онлайн игры: Кооп vs 1v1 Битва
+        if (e.btnModeCoop) {
+            e.btnModeCoop.addEventListener('click', () => {
+                this.selectedOnlineMode = 'coop';
+                e.btnModeCoop.classList.add('active');
+                if (e.btnModeBattle) e.btnModeBattle.classList.remove('active');
+            });
+        }
+        if (e.btnModeBattle) {
+            e.btnModeBattle.addEventListener('click', () => {
+                this.selectedOnlineMode = 'battle';
+                e.btnModeBattle.classList.add('active');
+                if (e.btnModeCoop) e.btnModeCoop.classList.remove('active');
+            });
+        }
+
         if (e.btnCopyCode) e.btnCopyCode.addEventListener('click', () => this.copyRoomCode());
         if (e.btnCopyLink) e.btnCopyLink.addEventListener('click', () => this.copyRoomLink());
         if (e.btnStartHost) e.btnStartHost.addEventListener('click', () => this._onHostClicked());
@@ -311,7 +379,26 @@ class UI {
             });
         }
 
-        // Клик по затемнению закрывает магазин / паузу / лидерборд / онлайн
+        // Битва 1v1 окно итогов кнопки
+        if (e.btnBattleRematch) {
+            e.btnBattleRematch.addEventListener('click', () => {
+                this.hideBattleResult();
+                if (typeof this.onBattleRematch === 'function') {
+                    this.onBattleRematch();
+                } else if (this.game.network && typeof this.game.network.requestBattleRematch === 'function') {
+                    this.game.network.requestBattleRematch();
+                } else if (typeof this.game.restartBattle === 'function') {
+                    this.game.restartBattle();
+                }
+            });
+        }
+        if (e.btnBattleExit) {
+            e.btnBattleExit.addEventListener('click', () => {
+                this.returnToTitle();
+            });
+        }
+
+        // Клик по затемнению закрывает магазин / паузу / лидерборд / онлайн / итоги битвы
         e.shop.addEventListener('click', (ev) => { if (ev.target === e.shop) this.closeShop(); });
         e.pause.addEventListener('click', (ev) => { if (ev.target === e.pause) this.closePause(); });
         if (e.leaderboard) {
@@ -320,19 +407,23 @@ class UI {
         if (e.onlineModal) {
             e.onlineModal.addEventListener('click', (ev) => { if (ev.target === e.onlineModal) this.closeOnlineModal(); });
         }
+        if (e.battleResultModal) {
+            e.battleResultModal.addEventListener('click', (ev) => { if (ev.target === e.battleResultModal) this.hideBattleResult(); });
+        }
     }
 
     _bindKeys() {
         window.addEventListener('keydown', (ev) => {
             if (ev.key === 'Escape') {
-                if (this.isOnlineOpen) { this.closeOnlineModal(); ev.preventDefault(); }
+                if (this.isBattleResultOpen) { this.hideBattleResult(); ev.preventDefault(); }
+                else if (this.isOnlineOpen) { this.closeOnlineModal(); ev.preventDefault(); }
                 else if (this.isLeaderboardOpen) { this.closeLeaderboard(); ev.preventDefault(); }
                 else if (this.shop.isOpen) { this.closeShop(); ev.preventDefault(); }
                 else if (this._vis(this.el.pause)) { this.closePause(); ev.preventDefault(); }
                 return;
             }
-            // Окно итогов: Enter / Пробел жмёт главную кнопку (но не пока открыт магазин / пауза / лидерборд / онлайн)
-            if ((ev.key === 'Enter' || ev.code === 'Space') && this._vis(this.el.result) && !this.shop.isOpen && !this._vis(this.el.pause) && !this.isLeaderboardOpen && !this.isOnlineOpen) {
+            // Окно итогов: Enter / Пробел жмёт главную кнопку (но не пока открыт магазин / пауза / лидерборд / онлайн / итоги битвы)
+            if ((ev.key === 'Enter' || ev.code === 'Space') && this._vis(this.el.result) && !this.shop.isOpen && !this._vis(this.el.pause) && !this.isLeaderboardOpen && !this.isOnlineOpen && !this.isBattleResultOpen) {
                 ev.preventDefault();
                 ev.stopPropagation();
                 if (!ev.repeat && performance.now() - this._resultShownAt > 700) this._resultMain();
@@ -364,9 +455,17 @@ class UI {
     setHud(visible) {
         this.el.hud.classList.toggle('hidden', !visible);
         this.el.touch.classList.toggle('hidden', !visible);
+        const isBattle = (this.game.mode === 'battle' || this.game.onlineMode === 'battle');
         if (this.el.coopBar) {
-            const isCoop = (this.game.mode === 'coop');
+            const isCoop = (this.game.mode === 'coop') && !isBattle;
             this.el.coopBar.classList.toggle('hidden', !visible || !isCoop);
+        }
+        if (this.el.btnHudSoloSwitch) {
+            const isCoop = (this.game.mode === 'coop') && !isBattle;
+            this.el.btnHudSoloSwitch.classList.toggle('hidden', !visible || !isCoop);
+        }
+        if (this.el.hudBattleBar) {
+            this.el.hudBattleBar.classList.toggle('hidden', !visible || !isBattle);
         }
         if (!visible) this._resetTouchInput();
         this._coinRect = null;
@@ -495,8 +594,70 @@ class UI {
         const e = this.el;
         this._clearTimers();
         this._resultFailed = !!r.failed;
-        e.resTitle.textContent = r.failed ? '😵 Свиньи разбежались…' : `🎉 День ${r.day} пройден!`;
+
+        // Строгая проверка истинного 2P Коопа (локального или сетевого)
+        // В одиночной игре (mode === 'solo') карточка коопа ВСЕГДА строго скрыта!
+        const isGameCoop = this.game && (this.game.mode === 'coop' || (this.game.isOnline && this.game.onlineMode === 'coop'));
+        const isTrueCoop = (r.isCoop === true || (r.mode === 'coop' && isGameCoop)) && (!this.game || this.game.mode !== 'solo');
+
+        if (r.failed) {
+            e.resTitle.textContent = '😵 Свиньи разбежались…';
+        } else if (isTrueCoop) {
+            e.resTitle.textContent = `🎉 День ${r.day} пройден командой!`;
+        } else {
+            e.resTitle.textContent = `🎉 День ${r.day} пройден!`;
+        }
+
         e.resCaught.textContent = `🐷 Поймано ${r.caught}/${r.total}`;
+
+        // Совместный кооп-итог (ТОЛЬКО в настоящем 2P Коопе)
+        if (e.resCoopCard) {
+            if (isTrueCoop) {
+                e.resCoopCard.classList.remove('hidden');
+                e.resCoopCard.style.display = '';
+                const p1 = Math.max(0, r.p1Caught || 0);
+                const p2 = Math.max(0, r.p2Caught || 0);
+                if (e.resP1Caught) e.resP1Caught.textContent = p1;
+                if (e.resP2Caught) e.resP2Caught.textContent = p2;
+
+                const totalEarned = r.earned || 0;
+                let c1 = Math.round(totalEarned / 2);
+                let c2 = totalEarned - c1;
+                if (p1 + p2 > 0) {
+                    c1 = Math.round((totalEarned * p1) / (p1 + p2));
+                    c2 = totalEarned - c1;
+                }
+                if (e.resP1Coins) e.resP1Coins.textContent = (r.p1Coins !== undefined) ? r.p1Coins : c1;
+                if (e.resP2Coins) e.resP2Coins.textContent = (r.p2Coins !== undefined) ? r.p2Coins : c2;
+
+                if (e.resP1Badge && e.resP2Badge) {
+                    if (p1 > p2) {
+                        e.resP1Badge.classList.remove('hidden');
+                        e.resP1Badge.textContent = '👑 MVP ДНЯ';
+                        e.resP2Badge.classList.add('hidden');
+                    } else if (p2 > p1) {
+                        e.resP2Badge.classList.remove('hidden');
+                        e.resP2Badge.textContent = '👑 MVP ДНЯ';
+                        e.resP1Badge.classList.add('hidden');
+                    } else if (p1 === p2 && p1 > 0) {
+                        e.resP1Badge.classList.remove('hidden');
+                        e.resP1Badge.textContent = '🤝 СЛАЖЕННАЯ КОМАНДА';
+                        e.resP2Badge.classList.remove('hidden');
+                        e.resP2Badge.textContent = '🤝 СЛАЖЕННАЯ КОМАНДА';
+                    } else {
+                        e.resP1Badge.classList.add('hidden');
+                        e.resP2Badge.classList.add('hidden');
+                    }
+                }
+
+                if (e.resCoopCombo) {
+                    e.resCoopCombo.textContent = 'x' + (r.coopCombo || 0);
+                }
+            } else {
+                e.resCoopCard.classList.add('hidden');
+                e.resCoopCard.style.display = 'none';
+            }
+        }
 
         e.resLines.innerHTML = '';
         (r.lines || []).forEach((l, i) => {
@@ -565,12 +726,15 @@ class UI {
      *  Магазин и пауза
      * ============================================================ */
     openShop(tab = 'upgrades') {
+        if (this.el.shop) this.el.shop.classList.remove('shop-closing');
         this.shop.open(tab);
         this._syncPause();
     }
 
-    closeShop() {
-        this.shop.close();
+    closeShop(immediate = false) {
+        this.shop.close(immediate, () => {
+            this._syncPause();
+        });
         this._syncPause();
     }
 
@@ -628,9 +792,45 @@ class UI {
         this.renderLeaderboard();
     }
 
+    getPlayerNickname() {
+        if (this.game && this.game.storage && typeof this.game.storage.getLocalProfile === 'function') {
+            const p = this.game.storage.getLocalProfile();
+            if (p && p.name) return p.name;
+        }
+        if (this.game && this.game.save && this.game.save.nickname) {
+            return this.game.save.nickname;
+        }
+        try {
+            const stored = localStorage.getItem('svinolov_player_nickname');
+            if (stored) return stored;
+        } catch (e) {}
+        return 'Фермер';
+    }
+
+    savePlayerNickname(name) {
+        const trimmed = (name || '').trim().slice(0, 15) || 'Фермер';
+        if (this.game && this.game.save) {
+            this.game.save.nickname = trimmed;
+        }
+        if (this.game && this.game.storage) {
+            if (typeof this.game.storage.savePlayerNickname === 'function') {
+                this.game.storage.savePlayerNickname(trimmed);
+            } else {
+                this.game.storage.save(this.game.save);
+            }
+        }
+        try {
+            localStorage.setItem('svinolov_player_nickname', trimmed);
+        } catch (e) {}
+        this.renderLeaderboard();
+        this.toast('✏️', 'Никнейм сохранён', `Ваше имя: ${trimmed}`);
+    }
+
     _getLeaderboardEntries() {
         const s = this.game.save || {};
         const st = s.stats || {};
+        const bst = s.battleStats || (this.game.storage && this.game.storage.data && this.game.storage.data.battleStats) || {};
+        const playerName = this.getPlayerNickname();
         const playerPrestige = Math.max(0, s.prestige || 0);
         const playerDay = Math.max(1, s.day || 1);
         const playerBestDay = Math.max(playerDay, st.bestDay || 1);
@@ -639,16 +839,17 @@ class UI {
         const playerTotalPigs = Math.max(0, st.totalPigs || 0);
         const playerBestCombo = Math.max(0, st.bestCombo || 0);
         const playerPerfectDays = Math.max(0, st.perfectDays || 0);
+        const playerBattleWins = Math.max(0, bst.wins || 0);
 
         const playerHatId = s.hat || 'straw';
         const playerHatDef = LEADERBOARD_HATS[playerHatId] || { name: 'Соломенная', icon: '🌾' };
 
         const playerEntry = {
-            id: 'player',
+            id: 'local_player',
             isPlayer: true,
-            name: 'Фермер',
-            farm: 'Родная завалинка',
-            title: 'Главный герой',
+            name: playerName,
+            farm: 'Ваше хозяйство',
+            title: playerBattleWins > 0 ? `Гроза свиней (${playerBattleWins} ⚔️)` : 'Хозяин фермы',
             hat: playerHatId,
             hatName: playerHatDef.name,
             hatIcon: playerHatDef.icon,
@@ -660,35 +861,55 @@ class UI {
                 bestDay: playerBestDay,
                 totalPigs: playerTotalPigs,
                 bestCombo: playerBestCombo,
-                perfectDays: playerPerfectDays
+                perfectDays: playerPerfectDays,
+                battleWins: playerBattleWins
             }
         };
 
-        const rivals = RIVALS_BASE.map((r) => {
+        // Реальные соперники из сетевых игр (Кооп и Битвы 1v1)
+        let opponents = [];
+        if (this.game && this.game.storage && typeof this.game.storage.getRealLeaderboard === 'function') {
+            const raw = this.game.storage.getRealLeaderboard(this.lbCriteria) || [];
+            opponents = raw.filter(r => r.id !== 'local_player' && r.name !== playerName);
+        } else if (s.realLeaderboard && Array.isArray(s.realLeaderboard)) {
+            opponents = s.realLeaderboard.filter(r => r.name !== playerName);
+        } else {
+            try {
+                const stored = localStorage.getItem('svinolov_real_players');
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    if (Array.isArray(parsed)) opponents = parsed.filter(r => r.name !== playerName);
+                }
+            } catch (e) {}
+        }
+
+        const formattedOpponents = opponents.map((r, i) => {
             const hatDef = LEADERBOARD_HATS[r.hat] || { name: 'Соломенная', icon: '🌾' };
+            const wins = r.battleWins || 0;
             return {
-                id: r.id,
+                id: r.id || `opponent_${i}`,
                 isPlayer: false,
-                name: r.name,
-                farm: r.farm,
-                title: r.title,
-                hat: r.hat,
+                name: r.name || 'Сетевой игрок',
+                farm: r.farm || 'Сетевой соперник',
+                title: wins > 0 ? `Соперник в 1v1 (${wins} ⚔️)` : 'Сетевой фермер',
+                hat: r.hat || 'straw',
                 hatName: hatDef.name,
                 hatIcon: hatDef.icon,
-                avatar: r.avatar,
+                avatar: r.avatar || (i % 2 === 0 ? '👩‍🌾' : '🤠'),
                 stats: {
-                    prestige: Math.round(r.base.prestige + playerPrestige * r.growth.prestige),
-                    totalCoins: Math.round(r.base.totalCoins + playerTotalCoins * r.growth.totalCoins),
-                    coins: Math.round(r.base.coins + playerCoins * r.growth.coins),
-                    bestDay: Math.round(r.base.bestDay + Math.max(0, playerBestDay - 5) * r.growth.bestDay),
-                    totalPigs: Math.round(r.base.totalPigs + playerTotalPigs * r.growth.totalPigs),
-                    bestCombo: Math.round(Math.max(r.base.bestCombo, Math.round(playerBestCombo * (0.8 + r.growth.bestCombo * 0.4)))),
-                    perfectDays: Math.round(r.base.perfectDays + playerPerfectDays * r.growth.perfectDays)
+                    prestige: r.prestige || 0,
+                    totalCoins: r.totalCoins || 0,
+                    coins: r.coins || 0,
+                    bestDay: r.bestDay || 1,
+                    totalPigs: r.totalPigs || 0,
+                    bestCombo: r.bestCombo || 0,
+                    perfectDays: r.perfectDays || 0,
+                    battleWins: wins
                 }
             };
         });
 
-        return [playerEntry, ...rivals];
+        return [playerEntry, ...formattedOpponents];
     }
 
     renderLeaderboard() {
@@ -726,7 +947,7 @@ class UI {
             this.el.lbSummaryRank.textContent = `${medal}Место: #${playerRank} из ${entries.length}`;
         }
 
-        // 4. Профиль игрока (Моя карточка)
+        // 4. Профиль игрока (Моя карточка с возможностью редактирования ника)
         if (this.el.lbPlayerCard && playerEntry) {
             const valFmt = curCrit.fmt(playerEntry.stats[curCrit.id] || 0);
             let rankClass = 'rank-other';
@@ -734,6 +955,9 @@ class UI {
             if (playerRank === 1) { rankClass = 'rank-gold'; rankBadge = '🥇 1'; }
             else if (playerRank === 2) { rankClass = 'rank-silver'; rankBadge = '🥈 2'; }
             else if (playerRank === 3) { rankClass = 'rank-bronze'; rankBadge = '🥉 3'; }
+
+            const bst = (this.game && this.game.save && this.game.save.battleStats) || {};
+            const battlePill = `⚔️ 1v1: ${bst.wins || 0}W / ${bst.losses || 0}L`;
 
             this.el.lbPlayerCard.innerHTML = `
                 <div class="lb-my-avatar-col">
@@ -748,13 +972,20 @@ class UI {
                         <span class="lb-you-tag">ЭТО ВЫ</span>
                         <span class="lb-my-farm">${playerEntry.farm}</span>
                     </div>
-                    <div class="lb-my-subline">Шляпа: <b>${playerEntry.hatName} ${playerEntry.hatIcon}</b> · Хозяйство процветает</div>
+                    <div class="lb-nick-edit-row">
+                        <label for="lb-nickname-input">Ваш ник:</label>
+                        <div class="lb-nick-input-wrap">
+                            <input type="text" id="lb-nickname-input" class="lb-nickname-input" maxlength="15" value="${playerEntry.name}" placeholder="Введите имя...">
+                            <button class="btn btn-small green lb-nick-save-btn" id="lb-nickname-save-btn" type="button" title="Сохранить имя">💾</button>
+                        </div>
+                    </div>
                     <div class="lb-my-quick-stats">
                         <span class="lb-stat-pill" title="Престижей">🐽 ${playerEntry.stats.prestige}</span>
                         <span class="lb-stat-pill" title="Монет">🪙 ${U.fmt(playerEntry.stats.coins)}</span>
                         <span class="lb-stat-pill" title="Поймано свиней">🐷 ${U.fmt(playerEntry.stats.totalPigs)}</span>
                         <span class="lb-stat-pill" title="Рекорд дня">📅 День ${playerEntry.stats.bestDay}</span>
                         <span class="lb-stat-pill" title="Лучшее комбо">🔥 x${playerEntry.stats.bestCombo}</span>
+                        <span class="lb-stat-pill" title="Победы в битвах 1v1">${battlePill}</span>
                     </div>
                 </div>
                 <div class="lb-my-rank-col">
@@ -763,6 +994,15 @@ class UI {
                     <div class="lb-my-metric-val">${valFmt}</div>
                 </div>
             `;
+
+            const nickInput = this.el.lbPlayerCard.querySelector('#lb-nickname-input');
+            const nickSave = this.el.lbPlayerCard.querySelector('#lb-nickname-save-btn');
+            if (nickInput && nickSave) {
+                nickSave.addEventListener('click', () => this.savePlayerNickname(nickInput.value));
+                nickInput.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Enter') this.savePlayerNickname(nickInput.value);
+                });
+            }
         }
 
         // 5. Заголовок колонки
@@ -770,9 +1010,9 @@ class UI {
             this.el.lbScoreColHeader.textContent = curCrit.col;
         }
 
-        // 6. Таблица лидеров
+        // 6. Таблица лидеров (только реальные игроки)
         if (this.el.lbTableBody) {
-            this.el.lbTableBody.innerHTML = entries.map((entry, idx) => {
+            const rowsHtml = entries.map((entry, idx) => {
                 const rank = idx + 1;
                 const isPlayer = !!entry.isPlayer;
                 const valFmt = curCrit.fmt(entry.stats[curCrit.id] || 0);
@@ -812,6 +1052,19 @@ class UI {
                     </tr>
                 `;
             }).join('');
+
+            const emptyNoticeHtml = entries.length <= 1 ? `
+                <tr class="lb-empty-row">
+                    <td colspan="4">
+                        <div class="lb-empty-notice">
+                            <b>💡 Здесь соревнуются только реальные игроки (без ботов).</b><br>
+                            Сыграйте по сети с друзьями через кнопку «🌐 Онлайн игра» (Кооп или Битву 1v1), чтобы сохранить их профили и рекорды в таблице лидеров!
+                        </div>
+                    </td>
+                </tr>
+            ` : '';
+
+            this.el.lbTableBody.innerHTML = rowsHtml + emptyNoticeHtml;
         }
     }
 
@@ -840,27 +1093,58 @@ class UI {
     }
 
     _syncModeUI() {
+        const isMobile = this.isMobileDevice();
         const isCoop = (this.game.mode === 'coop');
-        const text = isCoop ? 'Режим: 2 Игрока (Кооп)' : 'Режим: 1 Игрок';
-        const icon = isCoop ? '👥' : '👤';
 
+        // Кнопки на титульном экране
+        if (this.el.titleModeWrap) this.el.titleModeWrap.classList.remove('hidden');
+        if (this.el.titleModeSolo) {
+            this.el.titleModeSolo.classList.toggle('active', !isCoop);
+        }
+        if (this.el.titleModeCoop) {
+            this.el.titleModeCoop.classList.toggle('active', isCoop);
+        }
+
+        // Одиночная кнопка (для совместимости)
+        const text = isCoop ? 'Режим: 👥 Кооп на 1 устройстве' : 'Режим: 👤 1 Игрок';
+        const icon = isCoop ? '👥' : '👤';
         if (this.el.titleModeText) this.el.titleModeText.textContent = text;
         if (this.el.titleModeIcon) this.el.titleModeIcon.textContent = icon;
         if (this.el.titleMode) {
             this.el.titleMode.classList.toggle('coop-active', isCoop);
         }
+
+        // Кнопки в меню паузы
         if (this.el.pauseMode) {
             this.el.pauseMode.textContent = `${icon} ${text}`;
             this.el.pauseMode.classList.toggle('is-on', isCoop);
             this.el.pauseMode.classList.toggle('is-off', !isCoop);
+            this.el.pauseMode.classList.remove('hidden');
         }
+
+        // Заметная кнопка «Переключить в Соло» в меню паузы (ВСЕГДА доступна при коопе, включая мобильные устройства!)
+        if (this.el.pauseSwitchSolo) {
+            this.el.pauseSwitchSolo.classList.toggle('hidden', !isCoop);
+            this.el.pauseSwitchSolo.style.display = isCoop ? 'block' : 'none';
+        }
+
+        // Быстрые кнопки возврата в Соло в HUD
+        if (this.el.hudCoopToSolo) {
+            this.el.hudCoopToSolo.classList.toggle('hidden', !isCoop);
+        }
+        if (this.el.btnHudSoloSwitch) {
+            this.el.btnHudSoloSwitch.classList.toggle('hidden', !isCoop);
+        }
+
+        // Подсказки управления
         if (this.el.helpSolo) this.el.helpSolo.classList.toggle('hidden', isCoop);
         if (this.el.helpCoop) this.el.helpCoop.classList.toggle('hidden', !isCoop);
         if (this.el.pauseHelpSolo) this.el.pauseHelpSolo.classList.toggle('hidden', isCoop);
         if (this.el.pauseHelpCoop) this.el.pauseHelpCoop.classList.toggle('hidden', !isCoop);
 
         if (this.el.coopBar) {
-            this.el.coopBar.classList.toggle('hidden', !isCoop || !this._vis(this.el.hud));
+            const isBattle = (this.game.mode === 'battle' || this.game.onlineMode === 'battle');
+            this.el.coopBar.classList.toggle('hidden', !isCoop || isBattle || !this._vis(this.el.hud));
         }
     }
 
@@ -980,23 +1264,24 @@ class UI {
     }
 
     _onHostClicked() {
+        const mode = this.selectedOnlineMode || 'coop';
         if (typeof this.onHostRoom === 'function') {
-            this.onHostRoom();
+            this.onHostRoom(mode);
             return;
         }
         if (this.game.network && typeof this.game.network.hostRoom === 'function') {
-            this.game.network.hostRoom();
+            this.game.network.hostRoom(mode);
             return;
         }
         if (typeof this.game.hostOnlineGame === 'function') {
-            this.game.hostOnlineGame();
+            this.game.hostOnlineGame(mode);
             return;
         }
         // Заглушка, пока сетевой модуль инициализируется
         const fallbackCode = 'PIG-' + Math.floor(1000 + Math.random() * 9000);
         this.setHostRoomCode(fallbackCode);
-        this.setHostStatus('Ожидание подключения второго игрока (Фермерши)...');
-        this.toast('🌐', 'Комната создана!', `Код комнаты: ${fallbackCode}`);
+        this.setHostStatus(mode === 'battle' ? 'Ожидание соперника для 1v1 Битвы...' : 'Ожидание подключения второго игрока (Фермерши)...');
+        this.toast('🌐', 'Комната создана!', `Режим: ${mode === 'battle' ? '1v1 Битва' : 'Кооператив'} · Код: ${fallbackCode}`);
     }
 
     _onJoinClicked() {
@@ -1034,6 +1319,122 @@ class UI {
                 }, 400);
             }
         } catch (e) { /* ignore */ }
+    }
+
+    /* ============================================================
+     *  1v1 Битва ловцов (Battle Mode)
+     * ============================================================ */
+    setBattleHudVisible(visible) {
+        if (this.el.hudBattleBar) {
+            this.el.hudBattleBar.classList.toggle('hidden', !visible);
+        }
+        if (visible && this.el.coopBar) {
+            this.el.coopBar.classList.add('hidden');
+        }
+    }
+
+    updateBattleHud(secs, p1Score, p2Score, p1Name, p2Name) {
+        const e = this.el;
+        if (e.battleTimerSecs) {
+            const s = Math.max(0, Math.ceil(secs));
+            e.battleTimerSecs.textContent = s;
+            if (s <= 10) e.battleTimerSecs.parentElement.classList.add('danger');
+            else e.battleTimerSecs.parentElement.classList.remove('danger');
+        }
+        if (e.battleP1Score) e.battleP1Score.textContent = p1Score ?? 0;
+        if (e.battleP2Score) e.battleP2Score.textContent = p2Score ?? 0;
+        if (p1Name && e.battleP1Name) e.battleP1Name.textContent = p1Name;
+        if (p2Name && e.battleP2Name) e.battleP2Name.textContent = p2Name;
+    }
+
+    showBattleResult(data = {}) {
+        const e = this.el;
+        if (!e.battleResultModal) return;
+
+        const winner = data.winner || 'draw'; // 'p1' | 'p2' | 'draw'
+        const isHost = (data.role === 'host' || data.isHost);
+        const p1Score = data.p1Score || 0;
+        const p2Score = data.p2Score || 0;
+        const p1Name = data.p1Name || 'Фермер';
+        const p2Name = data.p2Name || 'Фермерша';
+        const reward = data.reward ?? 10;
+
+        const isWinner = (isHost && winner === 'p1') || (!isHost && winner === 'p2');
+        const isLoser = (isHost && winner === 'p2') || (!isHost && winner === 'p1');
+        const isDraw = (winner === 'draw');
+
+        if (e.battleResultTitle) {
+            if (isDraw) {
+                e.battleResultTitle.textContent = 'НИЧЬЯ!';
+                if (e.battleResultIcon) e.battleResultIcon.textContent = '🤝';
+                if (e.battleResultDesc) e.battleResultDesc.textContent = `Боевая ничья! Оба ловца поймали по ${p1Score} свиней.`;
+            } else if (isWinner) {
+                e.battleResultTitle.textContent = '👑 ПОБЕДА!';
+                if (e.battleResultIcon) e.battleResultIcon.textContent = '👑';
+                if (e.battleResultDesc) e.battleResultDesc.textContent = 'Великолепно! Вы поймали больше свиней за 60 секунд!';
+            } else {
+                e.battleResultTitle.textContent = 'ПОРАЖЕНИЕ';
+                if (e.battleResultIcon) e.battleResultIcon.textContent = '🐷';
+                if (e.battleResultDesc) e.battleResultDesc.textContent = 'Соперник оказался быстрее в этот раз. Возьмите реванш!';
+            }
+        }
+
+        if (e.battleResNameP1) e.battleResNameP1.textContent = p1Name;
+        if (e.battleResNameP2) e.battleResNameP2.textContent = p2Name;
+        if (e.battleResScoreP1) e.battleResScoreP1.textContent = p1Score;
+        if (e.battleResScoreP2) e.battleResScoreP2.textContent = p2Score;
+
+        if (e.battleResCardP1 && e.battleResCardP2) {
+            e.battleResCardP1.classList.toggle('winner', winner === 'p1');
+            e.battleResCardP2.classList.toggle('winner', winner === 'p2');
+        }
+
+        if (e.battleResBadgeP1 && e.battleResBadgeP2) {
+            if (winner === 'p1') {
+                e.battleResBadgeP1.className = 'battle-res-badge winner';
+                e.battleResBadgeP1.textContent = '👑 ПОБЕДИТЕЛЬ';
+                e.battleResBadgeP2.className = 'battle-res-badge';
+                e.battleResBadgeP2.textContent = '2 МЕСТО';
+            } else if (winner === 'p2') {
+                e.battleResBadgeP2.className = 'battle-res-badge winner';
+                e.battleResBadgeP2.textContent = '👑 ПОБЕДИТЕЛЬ';
+                e.battleResBadgeP1.className = 'battle-res-badge';
+                e.battleResBadgeP1.textContent = '2 МЕСТО';
+            } else {
+                e.battleResBadgeP1.className = 'battle-res-badge';
+                e.battleResBadgeP1.textContent = '🤝 НИЧЬЯ';
+                e.battleResBadgeP2.className = 'battle-res-badge';
+                e.battleResBadgeP2.textContent = '🤝 НИЧЬЯ';
+            }
+        }
+
+        if (e.battleRewardText) {
+            e.battleRewardText.textContent = `+${reward} 🪙`;
+        }
+
+        const bst = (this.game && this.game.save && this.game.save.battleStats) || {};
+        if (e.battleStatsSummary) {
+            const wins = bst.wins || 0;
+            const losses = bst.losses || 0;
+            const ties = bst.ties || 0;
+            e.battleStatsSummary.textContent = `Ваш рекорд в 1v1: ⚔️ ${wins} побед · ${losses} поражений · ${ties} ничьих`;
+        }
+
+        try {
+            if (isWinner && this.game.sfx) this.game.sfx.win();
+            else if (isLoser && this.game.sfx) this.game.sfx.fail();
+        } catch (err) {}
+
+        e.battleResultModal.classList.remove('hidden');
+        this._syncPause();
+        this._resetTouchInput();
+    }
+
+    hideBattleResult() {
+        if (this.el.battleResultModal) {
+            this.el.battleResultModal.classList.add('hidden');
+        }
+        this._syncPause();
     }
 
     /* ============================================================

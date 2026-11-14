@@ -76,6 +76,17 @@ const CONFIG = {
     PRESTIGE_BONUS: 0.5,
     PRESTIGE_START_BASE: 50,
     PRESTIGE_START_STEP: 50,
+    DUAL_BARNS_PRESTIGE_REQ: 6,
+
+    // 1v1 Battle Mode (Битва ловцов 1v1 на 60 сек)
+    BATTLE_DURATION: 60,
+    BATTLE_PIG_TARGET: 8,
+    BATTLE_PLAYER_SPEED: 280,
+    BATTLE_CATCH_RADIUS: 72,
+    BATTLE_DASH_COOLDOWN: 2.0,
+    BATTLE_WIN_REWARD: 25,
+    BATTLE_DRAW_REWARD: 10,
+    BATTLE_PARTICIPATION_REWARD: 5,
 
     WORLD_SIZES: [[1500, 1050], [2000, 1350], [2500, 1650]],
     TIER_DAYS: [1, 7, 15],
@@ -131,6 +142,23 @@ function prestigeStartingCoins(prestige) {
     return p > 0 ? (CONFIG.PRESTIGE_START_BASE + CONFIG.PRESTIGE_START_STEP * p) : 0;
 }
 CONFIG.prestigeStartingCoins = prestigeStartingCoins;
+
+/** Награда за матч 1v1 Battle Mode: win=25, draw=10, participation=5 */
+function battleReward(result) {
+    if (result === 'win' || result === 'winner') return CONFIG.BATTLE_WIN_REWARD;
+    if (result === 'tie' || result === 'draw') return CONFIG.BATTLE_DRAW_REWARD;
+    return CONFIG.BATTLE_PARTICIPATION_REWARD;
+}
+CONFIG.battleReward = battleReward;
+
+const BATTLE_DURATION = CONFIG.BATTLE_DURATION;
+const BATTLE_PIG_TARGET = CONFIG.BATTLE_PIG_TARGET;
+const BATTLE_PLAYER_SPEED = CONFIG.BATTLE_PLAYER_SPEED;
+const BATTLE_CATCH_RADIUS = CONFIG.BATTLE_CATCH_RADIUS;
+const BATTLE_DASH_COOLDOWN = CONFIG.BATTLE_DASH_COOLDOWN;
+const BATTLE_WIN_REWARD = CONFIG.BATTLE_WIN_REWARD;
+const BATTLE_DRAW_REWARD = CONFIG.BATTLE_DRAW_REWARD;
+const BATTLE_PARTICIPATION_REWARD = CONFIG.BATTLE_PARTICIPATION_REWARD;
 
 /* ---------- Прокачка напарников и пса ---------- */
 const HELPER_UPGRADES = [
@@ -214,6 +242,231 @@ const HATS = [
     { id: 'pig', name: 'Свиные ушки', cost: 900 },
     { id: 'crown', name: 'Корона', cost: 2000 }
 ];
+
+/* ---------- Многоуровневые цепочки достижений (Shadow Fight style) ---------- */
+const ROMAN_NUMERALS = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+
+const ACHIEVEMENT_CHAINS = [
+    {
+        id: 'pigs_catch',
+        name: 'Мастер-свинолов',
+        icon: '🐷',
+        stat: 'totalPigs',
+        unit: 'свиней',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Мастер-свинолов I', goal: 1, target: 1, reward: 5, desc: 'Поймай 1 свинью' },
+            { tier: 2, roman: 'II', title: 'Мастер-свинолов II', goal: 10, target: 10, reward: 15, desc: 'Поймай 10 свиней' },
+            { tier: 3, roman: 'III', title: 'Мастер-свинолов III', goal: 50, target: 50, reward: 40, desc: 'Поймай 50 свиней' },
+            { tier: 4, roman: 'IV', title: 'Мастер-свинолов IV', goal: 250, target: 250, reward: 150, desc: 'Поймай 250 свиней' },
+            { tier: 5, roman: 'V', title: 'Мастер-свинолов V', goal: 1000, target: 1000, reward: 600, desc: 'Поймай 1000 свиней' }
+        ]
+    },
+    {
+        id: 'coins_earned',
+        name: 'Золотой мешок',
+        icon: '💰',
+        stat: 'totalCoins',
+        unit: 'монет',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Золотой мешок I', goal: 20, target: 20, reward: 10, desc: 'Заработай 20 монет' },
+            { tier: 2, roman: 'II', title: 'Золотой мешок II', goal: 100, target: 100, reward: 25, desc: 'Заработай 100 монет' },
+            { tier: 3, roman: 'III', title: 'Золотой мешок III', goal: 500, target: 500, reward: 75, desc: 'Заработай 500 монет' },
+            { tier: 4, roman: 'IV', title: 'Золотой мешок IV', goal: 2000, target: 2000, reward: 250, desc: 'Заработай 2000 монет' },
+            { tier: 5, roman: 'V', title: 'Золотой мешок V', goal: 10000, target: 10000, reward: 1000, desc: 'Заработай 10000 монет' }
+        ]
+    },
+    {
+        id: 'combo_streak',
+        name: 'Виртуоз комбо',
+        icon: '🔥',
+        stat: 'bestCombo',
+        unit: 'комбо',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Виртуоз комбо I', goal: 3, target: 3, reward: 10, desc: 'Набери комбо x3' },
+            { tier: 2, roman: 'II', title: 'Виртуоз комбо II', goal: 6, target: 6, reward: 25, desc: 'Набери комбо x6' },
+            { tier: 3, roman: 'III', title: 'Виртуоз комбо III', goal: 10, target: 10, reward: 60, desc: 'Набери комбо x10' },
+            { tier: 4, roman: 'IV', title: 'Виртуоз комбо IV', goal: 15, target: 15, reward: 150, desc: 'Набери комбо x15' }
+        ]
+    },
+    {
+        id: 'days_survived',
+        name: 'Старожил фермы',
+        icon: '📅',
+        stat: 'bestDay',
+        unit: 'дней',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Старожил фермы I', goal: 3, target: 3, reward: 15, desc: 'Дойди до 3-го дня' },
+            { tier: 2, roman: 'II', title: 'Старожил фермы II', goal: 7, target: 7, reward: 35, desc: 'Дойди до 7-го дня' },
+            { tier: 3, roman: 'III', title: 'Старожил фермы III', goal: 15, target: 15, reward: 90, desc: 'Дойди до 15-го дня' },
+            { tier: 4, roman: 'IV', title: 'Старожил фермы IV', goal: 30, target: 30, reward: 250, desc: 'Дойди до 30-го дня' },
+            { tier: 5, roman: 'V', title: 'Старожил фермы V', goal: 50, target: 50, reward: 800, desc: 'Дойди до 50-го дня' }
+        ]
+    },
+    {
+        id: 'boars_caught',
+        name: 'Гроза кабанов',
+        icon: '🐗',
+        stat: 'boarsCaught',
+        unit: 'кабанов',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Гроза кабанов I', goal: 1, target: 1, reward: 15, desc: 'Поймай 1 кабана' },
+            { tier: 2, roman: 'II', title: 'Гроза кабанов II', goal: 3, target: 3, reward: 40, desc: 'Поймай 3 кабанов' },
+            { tier: 3, roman: 'III', title: 'Гроза кабанов III', goal: 10, target: 10, reward: 120, desc: 'Поймай 10 кабанов' },
+            { tier: 4, roman: 'IV', title: 'Гроза кабанов IV', goal: 25, target: 25, reward: 300, desc: 'Поймай 25 кабанов' }
+        ]
+    },
+    {
+        id: 'bosses_defeated',
+        name: 'Повелитель боссов',
+        icon: '👑',
+        stat: 'bossKilled',
+        unit: 'боссов',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Повелитель боссов I', goal: 1, target: 1, reward: 30, desc: 'Одолей 1 Хряка-Босса' },
+            { tier: 2, roman: 'II', title: 'Повелитель боссов II', goal: 3, target: 3, reward: 80, desc: 'Одолей 3 боссов' },
+            { tier: 3, roman: 'III', title: 'Повелитель боссов III', goal: 7, target: 7, reward: 200, desc: 'Одолей 7 боссов' },
+            { tier: 4, roman: 'IV', title: 'Повелитель боссов IV', goal: 15, target: 15, reward: 500, desc: 'Одолей 15 боссов' }
+        ]
+    },
+    {
+        id: 'ninjas_caught',
+        name: 'Охотник на ниндзя',
+        icon: '🥷',
+        stat: 'ninjaCaught',
+        unit: 'ниндзя',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Охотник на ниндзя I', goal: 1, target: 1, reward: 15, desc: 'Поймай 1 свинью-ниндзя' },
+            { tier: 2, roman: 'II', title: 'Охотник на ниндзя II', goal: 3, target: 3, reward: 35, desc: 'Поймай 3 свиней-ниндзя' },
+            { tier: 3, roman: 'III', title: 'Охотник на ниндзя III', goal: 8, target: 8, reward: 90, desc: 'Поймай 8 свиней-ниндзя' },
+            { tier: 4, roman: 'IV', title: 'Охотник на ниндзя IV', goal: 20, target: 20, reward: 250, desc: 'Поймай 20 свиней-ниндзя' }
+        ]
+    },
+    {
+        id: 'gold_caught',
+        name: 'Золотой ловец',
+        icon: '✨',
+        stat: 'goldCaught',
+        unit: 'золотых',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Золотой ловец I', goal: 1, target: 1, reward: 25, desc: 'Поймай 1 золотую свинью' },
+            { tier: 2, roman: 'II', title: 'Золотой ловец II', goal: 3, target: 3, reward: 75, desc: 'Поймай 3 золотых свиней' },
+            { tier: 3, roman: 'III', title: 'Золотой ловец III', goal: 7, target: 7, reward: 200, desc: 'Поймай 7 золотых свиней' }
+        ]
+    },
+    {
+        id: 'perfect_days',
+        name: 'Мастер совершенства',
+        icon: '⭐',
+        stat: 'perfectDays',
+        unit: 'дней 3★',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Мастер совершенства I', goal: 1, target: 1, reward: 20, desc: 'Заверши 1 день на 3★' },
+            { tier: 2, roman: 'II', title: 'Мастер совершенства II', goal: 5, target: 5, reward: 50, desc: 'Заверши 5 дней на 3★' },
+            { tier: 3, roman: 'III', title: 'Мастер совершенства III', goal: 15, target: 15, reward: 150, desc: 'Заверши 15 дней на 3★' },
+            { tier: 4, roman: 'IV', title: 'Мастер совершенства IV', goal: 30, target: 30, reward: 400, desc: 'Заверши 30 дней на 3★' }
+        ]
+    },
+    {
+        id: 'sprint_time',
+        name: 'Марафонец',
+        icon: '💨',
+        stat: 'sprintTimeTotal',
+        unit: 'сек',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Марафонец I', goal: 15, target: 15, reward: 15, desc: 'Проведи 15 сек в беге' },
+            { tier: 2, roman: 'II', title: 'Марафонец II', goal: 60, target: 60, reward: 40, desc: 'Проведи 60 сек в беге' },
+            { tier: 3, roman: 'III', title: 'Марафонец III', goal: 180, target: 180, reward: 120, desc: 'Проведи 180 сек в беге' },
+            { tier: 4, roman: 'IV', title: 'Марафонец IV', goal: 600, target: 600, reward: 350, desc: 'Проведи 600 сек в беге' }
+        ]
+    },
+    {
+        id: 'prestige_rank',
+        name: 'Престижный фермер',
+        icon: '🚜',
+        stat: 'prestige',
+        unit: 'престижей',
+        tiers: [
+            { tier: 1, roman: 'I', title: 'Престижный фермер I', goal: 1, target: 1, reward: 100, desc: 'Продай ферму 1 раз (Престиж I)' },
+            { tier: 2, roman: 'II', title: 'Престижный фермер II', goal: 3, target: 3, reward: 300, desc: 'Достигни 3 уровня Престижа' },
+            { tier: 3, roman: 'III', title: 'Престижный фермер III', goal: 6, target: 6, reward: 1000, desc: 'Достигни 6 уровня Престижа (открывает право покупки Второго Амбара!)', unlocksDualBarns: true }
+        ]
+    }
+];
+
+// O(1) ассоциативный доступ по ID цепочки
+for (const chain of ACHIEVEMENT_CHAINS) {
+    ACHIEVEMENT_CHAINS[chain.id] = chain;
+}
+CONFIG.ACHIEVEMENT_CHAINS = ACHIEVEMENT_CHAINS;
+
+/**
+ * Возвращает текущий активный (незавершенный) уровень цепочки достижений для сохранения
+ * Только текущий незавершенный уровень активен и отображается
+ * @param {string} chainId
+ * @param {Object} save
+ */
+function getActiveAchievementTier(chainId, save) {
+    const chain = ACHIEVEMENT_CHAINS[chainId];
+    if (!chain) return null;
+    const achProgress = (save && save.achProgress) || {};
+    const prog = achProgress[chainId] || { tier: 1, claimed: false };
+    const curTierNum = Math.max(1, Math.floor(Number(prog.tier) || 1));
+    const maxTierNum = chain.tiers.length;
+    const isCompleted = curTierNum > maxTierNum;
+
+    // Только ТЕКУЩИЙ незавершенный уровень активен и виден (если все завершены — показывается последний со статусом MAX)
+    const tierDef = isCompleted 
+        ? chain.tiers[chain.tiers.length - 1] 
+        : (chain.tiers.find(t => t.tier === curTierNum) || chain.tiers[0]);
+
+    let statVal = 0;
+    if (save) {
+        if (chain.stat === 'sprintTimeTotal') {
+            statVal = Math.floor(Number(save.sprintTimeTotal) || (save.stats && Number(save.stats.sprintTimeTotal)) || 0);
+        } else if (chain.stat === 'prestige') {
+            statVal = Number(save.prestige) || 0;
+        } else if (save.stats) {
+            statVal = Number(save.stats[chain.stat]) || 0;
+        }
+    }
+
+    const goal = tierDef.goal;
+    const canClaim = !isCompleted && !prog.claimed && (statVal >= goal);
+    const progressVal = Math.min(statVal, goal);
+    const pct = isCompleted ? 100 : Math.min(100, Math.round((statVal / goal) * 100));
+
+    return {
+        chainId: chain.id,
+        chainName: chain.name,
+        icon: chain.icon,
+        stat: chain.stat,
+        tier: curTierNum,
+        maxTier: maxTierNum,
+        roman: isCompleted ? 'MAX' : tierDef.roman,
+        title: isCompleted ? `${chain.name} (Завершено)` : tierDef.title,
+        desc: tierDef.desc,
+        goal,
+        target: goal,
+        reward: tierDef.reward,
+        currentValue: statVal,
+        displayValue: progressVal,
+        pct,
+        canClaim,
+        claimed: !!prog.claimed,
+        isCompleted,
+        unlocksDualBarns: !!tierDef.unlocksDualBarns
+    };
+}
+CONFIG.getActiveAchievementTier = getActiveAchievementTier;
+
+/**
+ * Возвращает список текущих активных уровней для всех цепочек
+ * @param {Object} save
+ */
+function getAllActiveAchievementTiers(save) {
+    return ACHIEVEMENT_CHAINS.map(c => getActiveAchievementTier(c.id, save));
+}
+CONFIG.getAllActiveAchievementTiers = getAllActiveAchievementTiers;
 
 /* ---------- Достижения ---------- */
 const ACHIEVEMENTS = [

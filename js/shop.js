@@ -14,6 +14,7 @@ class Shop {
         this.coinsEl = document.getElementById('shop-coins');
         this.tab = 'upgrades';
         this._coins = null;
+        this._closeTimer = null;
 
         this.tabs = [
             { id: 'upgrades', label: '⬆️ Улучшения' },
@@ -30,9 +31,16 @@ class Shop {
         this.bodyEl.addEventListener('click', (e) => this._onBody(e));
     }
 
-    get isOpen() { return !this.el.classList.contains('hidden'); }
+    get isOpen() {
+        return !this.el.classList.contains('hidden') && !this.el.classList.contains('shop-closing');
+    }
 
     open(tab) {
+        if (this._closeTimer) {
+            clearTimeout(this._closeTimer);
+            this._closeTimer = null;
+        }
+        this.el.classList.remove('shop-closing');
         if (tab) this.tab = tab;
         this.el.classList.remove('hidden');
         this._coins = null;
@@ -40,7 +48,39 @@ class Shop {
         this.render();
     }
 
-    close() { this.el.classList.add('hidden'); }
+    close(immediate = false, onClosed = null) {
+        if (typeof immediate === 'function') {
+            onClosed = immediate;
+            immediate = false;
+        }
+        if (this.el.classList.contains('hidden') || this.el.classList.contains('shop-closing')) {
+            return;
+        }
+        if (immediate) {
+            if (this._closeTimer) clearTimeout(this._closeTimer);
+            this._closeTimer = null;
+            this.el.classList.remove('shop-closing');
+            this.el.classList.add('hidden');
+            if (this.ui && typeof this.ui._syncPause === 'function') {
+                this.ui._syncPause();
+            }
+            if (typeof onClosed === 'function') onClosed();
+            return;
+        }
+
+        // Плавное закрытие через класс .shop-closing
+        this.el.classList.add('shop-closing');
+        if (this._closeTimer) clearTimeout(this._closeTimer);
+        this._closeTimer = setTimeout(() => {
+            this.el.classList.add('hidden');
+            this.el.classList.remove('shop-closing');
+            this._closeTimer = null;
+            if (this.ui && typeof this.ui._syncPause === 'function') {
+                this.ui._syncPause();
+            }
+            if (typeof onClosed === 'function') onClosed();
+        }, 220);
+    }
 
     refresh() { if (this.isOpen) this.render(); }
 
@@ -65,10 +105,22 @@ class Shop {
         this.coinsEl.textContent = coinsTxt;
 
         // Вкладки
-        const achDone = ACHIEVEMENTS.filter((a) => save.ach[a.id]).length;
+        let achDone = 0;
+        let achTotal = 0;
+        if (typeof ACHIEVEMENT_CHAINS !== 'undefined' && Array.isArray(ACHIEVEMENT_CHAINS)) {
+            achTotal = ACHIEVEMENT_CHAINS.length;
+            achDone = ACHIEVEMENT_CHAINS.filter(chain => {
+                const prog = (save.achProgress && save.achProgress[chain.id]) || { tier: 1 };
+                return (prog.tier > chain.tiers.length);
+            }).length;
+        } else if (typeof ACHIEVEMENTS !== 'undefined') {
+            achTotal = ACHIEVEMENTS.length;
+            achDone = ACHIEVEMENTS.filter((a) => save.ach && save.ach[a.id]).length;
+        }
+
         this.tabsEl.innerHTML = this.tabs.map((t) => {
             let badge = '';
-            if (t.id === 'ach') badge = `<span class="badge">${achDone}/${ACHIEVEMENTS.length}</span>`;
+            if (t.id === 'ach') badge = `<span class="badge">${achDone}/${achTotal}</span>`;
             return `<button type="button" class="tab${t.id === this.tab ? ' active' : ''}" data-tab="${t.id}">${t.label}${badge}</button>`;
         }).join('');
 
@@ -103,7 +155,22 @@ class Shop {
         const lvl = (save.upgrades && save.upgrades[up.id]) || 0;
         const maxed = lvl >= up.max;
         let btn, fx;
-        if (maxed) {
+        let locked = false;
+
+        const isHelperUp = (up.id === 'helper_speed' || up.id === 'helper_radius' || up.id === 'helper_vision');
+        const isDogUp = (up.id === 'dog_power');
+        const hasHelper = (save.helpers || 0) >= 1;
+        const hasDog = (save.dogs || 0) >= 1;
+
+        if (isHelperUp && !hasHelper) {
+            locked = true;
+            btn = '<button type="button" class="btn" disabled>🔒 Сначала наймите напарника</button>';
+            fx = `<span class="now">${up.fx(lvl)}</span>`;
+        } else if (isDogUp && !hasDog) {
+            locked = true;
+            btn = '<button type="button" class="btn" disabled>🔒 Сначала наймите пса Бобика</button>';
+            fx = `<span class="now">${up.fx(lvl)}</span>`;
+        } else if (maxed) {
             btn = '<button type="button" class="btn yellow" disabled>⭐ МАКС</button>';
             fx = `<span class="now">${up.fx(lvl)}</span>`;
         } else {
@@ -112,13 +179,19 @@ class Shop {
             btn = `<button type="button" class="btn green ${can ? 'can' : 'off'}" data-silent="1" data-act="upgrade" data-id="${up.id}">Улучшить · 🪙 ${U.fmt(cost)}</button>`;
             fx = `<span class="now">${up.fx(lvl)}</span><span>➜</span><span class="next">${up.fx(lvl + 1)}</span>`;
         }
-        return `<div class="card${maxed ? ' maxed' : ''}" data-id="${up.id}">
-            <div class="card-head"><div class="card-ico">${up.icon}</div>
-                <div><div class="card-title">${up.title}</div><div class="card-desc">${up.desc}</div></div></div>
+        return `<div class="card${maxed ? ' maxed' : ''}${locked ? ' locked-card' : ''}" data-id="${up.id}" style="display:flex; flex-direction:column; height:100%; box-sizing:border-box;">
+            <div class="card-head">
+                <div class="card-ico">${up.icon}</div>
+                <div style="flex:1; min-width:0;">
+                    <div class="card-title">${up.title}</div>
+                    <div class="card-desc" style="min-height:30px; display:flex; align-items:center;">${up.desc}</div>
+                </div>
+            </div>
             <div class="pips-label"><span>Уровень ${lvl} из ${up.max}</span></div>
             ${this._pips(lvl, up.max)}
-            <div class="card-fx">${fx}</div>
-            ${btn}</div>`;
+            <div class="card-fx" style="min-height:24px; display:flex; align-items:center;">${fx}</div>
+            <div class="card-btn-wrap" style="margin-top:auto; padding-top:4px;">${btn}</div>
+        </div>`;
     }
 
     _upgradesHtml(save) {
@@ -128,8 +201,8 @@ class Shop {
         const farmerCards = farmerUps.map(up => this._renderUpgradeCard(up, save)).join('');
         const helperCards = helperUps.map(up => this._renderUpgradeCard(up, save)).join('');
 
-        const titleFarmer = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: #fff; margin: 4px 0 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.55);">🧑‍🌾 Снаряжение фермера</div>`;
-        const titleHelpers = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: #fff; margin: 16px 0 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.55);">🐕 Прокачка напарников и пса</div>`;
+        const titleFarmer = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: var(--ink, #3b2212); background: rgba(59,34,18,0.07); border-left: 4px solid var(--orange, #f97316); border-radius: 8px; padding: 6px 12px; margin: 6px 0 2px; display: flex; align-items: center; gap: 8px;">🧑‍🌾 Снаряжение фермера</div>`;
+        const titleHelpers = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: var(--ink, #3b2212); background: rgba(59,34,18,0.07); border-left: 4px solid var(--orange, #f97316); border-radius: 8px; padding: 6px 12px; margin: 14px 0 2px; display: flex; align-items: center; gap: 8px;">🐕 Прокачка напарников и пса</div>`;
 
         return titleFarmer + farmerCards + titleHelpers + helperCards;
     }
@@ -150,19 +223,26 @@ class Shop {
                 const can = save.coins >= cost;
                 btn = `<button type="button" class="btn green ${can ? 'can' : 'off'}" data-silent="1" data-act="team" data-id="${m.id}">Нанять · 🪙 ${U.fmt(cost)}</button>`;
             }
-            return `<div class="card${count >= total ? ' maxed' : ''}${locked ? ' locked-card' : ''}" data-id="${m.id}">
-                <div class="card-head"><div class="card-ico">${m.icon}</div>
-                    <div><div class="card-title">${m.title}</div><div class="card-desc">${m.desc}</div></div></div>
+            return `<div class="card${count >= total ? ' maxed' : ''}${locked ? ' locked-card' : ''}" data-id="${m.id}" style="display:flex; flex-direction:column; height:100%; box-sizing:border-box;">
+                <div class="card-head">
+                    <div class="card-ico">${m.icon}</div>
+                    <div style="flex:1; min-width:0;">
+                        <div class="card-title">${m.title}</div>
+                        <div class="card-desc" style="min-height:30px; display:flex; align-items:center;">${m.desc}</div>
+                    </div>
+                </div>
                 <div class="pips-label"><span>В строю: ${count}</span><span>максимум ${total}</span></div>
                 ${this._pips(count, total)}
-                ${btn}</div>`;
+                <div class="card-fx" style="min-height:24px;"></div>
+                <div class="card-btn-wrap" style="margin-top:auto; padding-top:4px;">${btn}</div>
+            </div>`;
         }).join('');
 
         const helperList = typeof HELPER_UPGRADES !== 'undefined' ? HELPER_UPGRADES : UPGRADES.filter(u => u.category === 'team');
         const helperCards = helperList.map(up => this._renderUpgradeCard(up, save)).join('');
 
-        const titleTeam = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: #fff; margin: 4px 0 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.55);">👥 Найм напарников</div>`;
-        const titleUpgrades = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: #fff; margin: 16px 0 2px; text-shadow: 0 2px 4px rgba(0,0,0,0.55);">🐕 Прокачка напарников и пса</div>`;
+        const titleTeam = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: var(--ink, #3b2212); background: rgba(59,34,18,0.07); border-left: 4px solid var(--orange, #f97316); border-radius: 8px; padding: 6px 12px; margin: 6px 0 2px; display: flex; align-items: center; gap: 8px;">👥 Найм напарников</div>`;
+        const titleUpgrades = `<div class="shop-section-title" style="grid-column: 1 / -1; font-size: 16px; font-weight: 800; color: var(--ink, #3b2212); background: rgba(59,34,18,0.07); border-left: 4px solid var(--orange, #f97316); border-radius: 8px; padding: 6px 12px; margin: 14px 0 2px; display: flex; align-items: center; gap: 8px;">🐕 Прокачка напарников и пса</div>`;
 
         return titleTeam + teamCards + titleUpgrades + helperCards;
     }
@@ -178,10 +258,11 @@ class Shop {
                 const can = save.coins >= h.cost;
                 btn = `<button type="button" class="btn green btn-small ${can ? 'can' : 'off'}" data-silent="1" data-act="hat" data-id="${h.id}">🪙 ${U.fmt(h.cost)}</button>`;
             }
-            return `<div class="card hat-card${worn ? ' worn' : ''}${owned ? '' : ' locked-hat'}" data-id="${h.id}">
+            return `<div class="card hat-card${worn ? ' worn' : ''}${owned ? '' : ' locked-hat'}" data-id="${h.id}" style="display:flex; flex-direction:column; justify-content:space-between; height:100%; box-sizing:border-box;">
                 <canvas width="208" height="192" data-hat="${h.id}"></canvas>
-                <div class="card-title">${h.name}</div>
-                ${btn}</div>`;
+                <div class="card-title" style="margin:4px 0 2px;">${h.name}</div>
+                <div class="card-btn-wrap" style="margin-top:auto; width:100%; padding-top:4px;">${btn}</div>
+            </div>`;
         }).join('');
     }
 
@@ -202,18 +283,102 @@ class Shop {
     }
 
     _achHtml(save) {
-        const done = ACHIEVEMENTS.filter((a) => save.ach[a.id]).length;
-        const head = `<div class="ach-count">🏆 Выполнено: <b>${done}</b> из <b>${ACHIEVEMENTS.length}</b></div>`;
+        if (typeof ACHIEVEMENT_CHAINS !== 'undefined' && Array.isArray(ACHIEVEMENT_CHAINS)) {
+            const chains = ACHIEVEMENT_CHAINS;
+            let totalClaimedTiers = 0;
+            let totalPossibleTiers = 0;
+            let fullyCompletedChains = 0;
+
+            const cards = chains.map(chain => {
+                const getTierFn = (typeof getActiveAchievementTier === 'function') 
+                    ? getActiveAchievementTier 
+                    : (typeof CONFIG !== 'undefined' && typeof CONFIG.getActiveAchievementTier === 'function' ? CONFIG.getActiveAchievementTier : null);
+                
+                const data = getTierFn ? getTierFn(chain.id, save) : null;
+                const prog = (save.achProgress && save.achProgress[chain.id]) || { tier: 1, claimed: false };
+                const curTier = data ? data.tier : Math.max(1, Number(prog.tier) || 1);
+                const maxTier = chain.tiers.length;
+                totalPossibleTiers += maxTier;
+                totalClaimedTiers += Math.min(curTier - 1, maxTier);
+
+                const isCompleted = data ? data.isCompleted : (curTier > maxTier);
+                if (isCompleted) fullyCompletedChains++;
+
+                const tierDef = isCompleted 
+                    ? chain.tiers[maxTier - 1] 
+                    : (chain.tiers.find(t => t.tier === curTier) || chain.tiers[0]);
+
+                let statVal = 0;
+                if (chain.stat === 'sprintTimeTotal') {
+                    statVal = Math.floor(Number(save.sprintTimeTotal) || (save.stats && Number(save.stats.sprintTimeTotal)) || 0);
+                } else if (chain.stat === 'prestige') {
+                    statVal = Number(save.prestige) || 0;
+                } else if (save.stats) {
+                    statVal = Number(save.stats[chain.stat]) || 0;
+                }
+
+                const goal = tierDef.goal || tierDef.target;
+                const canClaim = data ? data.canClaim : (!isCompleted && statVal >= goal);
+                const displayVal = Math.min(statVal, goal);
+                const pct = isCompleted ? 100 : Math.min(100, Math.round((statVal / goal) * 100));
+
+                const tierRoman = tierDef.roman || (typeof ROMAN_NUMERALS !== 'undefined' && ROMAN_NUMERALS[curTier] ? ROMAN_NUMERALS[curTier] : curTier);
+                const tierBadgeClass = `tier-${Math.min(curTier, 5)}`;
+                
+                let tierBadgeIcon = '🥉';
+                if (curTier === 2) tierBadgeIcon = '🥈';
+                else if (curTier === 3) tierBadgeIcon = '🥇';
+                else if (curTier === 4) tierBadgeIcon = '💎';
+                else if (curTier >= 5) tierBadgeIcon = '👑';
+
+                const tierBadgeText = isCompleted ? '👑 МАСТЕР' : `${tierBadgeIcon} Степень ${tierRoman}`;
+
+                let actionHtml = '';
+                if (isCompleted) {
+                    actionHtml = `<div class="ach-tier-badge tier-max" style="width:100%; justify-content:center; padding:6px; box-sizing:border-box;">👑 ВСЕ СТЕПЕНИ ВЫПОЛНЕНЫ!</div>`;
+                } else if (canClaim) {
+                    actionHtml = `<button type="button" class="btn green ach-claim-btn can" data-silent="1" data-act="claim-ach-chain" data-chain="${chain.id}">Забрать 🪙 +${U.fmt(tierDef.reward)}</button>`;
+                } else {
+                    actionHtml = `<div class="ach-meta"><span>Прогресс: <b>${U.fmt(displayVal)}</b> / ${U.fmt(goal)} ${chain.unit || ''}</span><span>Награда: <b>🪙 ${U.fmt(tierDef.reward)}</b></span></div>`;
+                }
+
+                return `<div class="card ach-chain-card${canClaim ? ' claimable' : ''}${isCompleted ? ' all-done' : ''}" data-id="${chain.id}">
+                    <div class="ach-chain-head">
+                        <div class="ach-chain-ico">${chain.icon}</div>
+                        <div class="ach-chain-info">
+                            <div class="ach-chain-title-row">
+                                <span class="ach-chain-title">${chain.name}</span>
+                                <span class="ach-tier-badge ${isCompleted ? 'tier-max' : tierBadgeClass}">${tierBadgeText}</span>
+                            </div>
+                            <div class="ach-chain-desc">${tierDef.desc}</div>
+                        </div>
+                    </div>
+                    <div class="ach-chain-progress-wrap">
+                        <div class="ach-chain-bar"><i style="width:${pct}%"></i></div>
+                    </div>
+                    ${actionHtml}
+                </div>`;
+            }).join('');
+
+            const head = `<div class="ach-count" style="grid-column: 1 / -1; text-align: center; font-size: 16px; font-weight: 800; padding: 4px 0 8px; color: var(--ink, #3b2212);">
+                🏆 Достижения: завершено цепочек <b>${fullyCompletedChains}</b> из <b>${chains.length}</b> (рангов получено: <b>${totalClaimedTiers}</b> / <b>${totalPossibleTiers}</b>)
+            </div>`;
+            return head + cards;
+        }
+
+        // Классический режим достижений (fallback)
+        const done = ACHIEVEMENTS.filter((a) => save.ach && save.ach[a.id]).length;
+        const head = `<div class="ach-count" style="grid-column: 1 / -1; text-align: center; font-size: 17px; font-weight: 800; padding: 4px 0 8px; color: var(--ink, #3b2212);">🏆 Выполнено: <b>${done}</b> из <b>${ACHIEVEMENTS.length}</b></div>`;
         return head + ACHIEVEMENTS.map((a) => {
-            const ok = !!save.ach[a.id];
-            const val = Math.min(save.stats[a.stat] || 0, a.goal);
+            const ok = !!(save.ach && save.ach[a.id]);
+            const val = Math.min((save.stats && save.stats[a.stat]) || 0, a.goal);
             const pct = Math.round((val / a.goal) * 100);
-            return `<div class="card ach${ok ? ' done' : ''}" data-id="${a.id}">
+            return `<div class="card ach${ok ? ' done' : ''}" data-id="${a.id}" style="display:flex; flex-direction:row; align-items:center; gap:12px; box-sizing:border-box;">
                 <div class="card-ico">${a.icon}</div>
-                <div class="ach-main">
+                <div class="ach-main" style="flex:1; min-width:0;">
                     <div class="card-title">${a.title}</div>
                     <div class="card-desc">${a.desc}</div>
-                    <div class="bar"><i style="width:${pct}%"></i></div>
+                    <div class="bar" style="margin: 4px 0;"><i style="width:${pct}%"></i></div>
                     <div class="ach-meta"><span>${U.fmt(val)} / ${U.fmt(a.goal)}</span><span>Награда: 🪙 ${U.fmt(a.reward)}</span></div>
                 </div>
                 ${ok ? '<div class="ach-check">✅</div>' : ''}</div>`;
@@ -266,7 +431,37 @@ class Shop {
             </ul>
             <div class="bonus">Продаж: <b>${curPrestige}</b> · сейчас бонус <b>+${curMult}%</b>${curBonusCoins > 0 ? ` · прошлый старт: <b>+${curBonusCoins} 🪙</b>` : ''}</div>
             ${action}</div>`;
-        return grid + prestige;
+
+        // Второй амбар на Престиже 6+ (Северный и Южный амбары)
+        let dualBarnsHtml = '';
+        if (curPrestige >= 6) {
+            const hasDual = !!(save.hasDualBarns || (this.game && this.game.hasDualBarns));
+            let dbAction = '';
+            if (hasDual) {
+                dbAction = '<div class="dual-barns-badge-active">✔ Северный и Южный амбары активны!</div>';
+            } else {
+                dbAction = '<button type="button" class="btn green btn-big can" data-silent="1" data-act="dual-barns" style="width:100%">🏡 Активировать Второй Амбар</button>';
+            }
+
+            dualBarnsHtml = `<div class="card dual-barns-card">
+                <h3>🏡 Второй амбар (Северный и Южный амбары)</h3>
+                <div class="card-desc" style="font-size:14px; opacity:1; color:#155e75;">
+                    Эксклюзив 6-го уровня престижа! На вашей ферме работают сразу два независимых амбара — Северный и Южный.
+                </div>
+                <ul>
+                    <li>Свиньи разбегаются во все стороны и ловятся в ближайший амбар.</li>
+                    <li>Повышенная вместимость и динамичный маршрут ловли.</li>
+                    <li>Центральная площадь деревни и мощеная разводка путей.</li>
+                </ul>
+                ${dbAction}
+            </div>`;
+        } else {
+            dualBarnsHtml = `<div class="prestige-lock" style="margin-top:14px;">
+                🔒 <b>Второй амбар (Северный и Южный)</b> откроется на 6-м уровне престижа (сейчас престиж: ${curPrestige}).
+            </div>`;
+        }
+
+        return grid + prestige + dualBarnsHtml;
     }
 
     /* ---------- Действия ---------- */
@@ -276,10 +471,61 @@ class Shop {
         const act = btn.dataset.act, id = btn.dataset.id;
         const g = this.game;
         let ok = false;
-        if (act === 'upgrade') ok = g.buyUpgrade(id);
+        if (act === 'upgrade') {
+            if ((id === 'helper_speed' || id === 'helper_radius' || id === 'helper_vision') && (g.save.helpers || 0) < 1) {
+                if (this.ui && typeof this.ui.toast === 'function') {
+                    this.ui.toast('🔒 Сначала наймите напарника во вкладке «Команда»!', 'warn');
+                }
+                this._shake(btn);
+                return;
+            }
+            if (id === 'dog_power' && (g.save.dogs || 0) < 1) {
+                if (this.ui && typeof this.ui.toast === 'function') {
+                    this.ui.toast('🔒 Сначала наймите пса Бобика во вкладке «Команда»!', 'warn');
+                }
+                this._shake(btn);
+                return;
+            }
+            ok = g.buyUpgrade(id);
+        }
         else if (act === 'team') ok = g.buyTeam(id);
         else if (act === 'hat') ok = g.buyHat(id);
-        else if (act === 'prestige') {
+        else if (act === 'claim-ach-chain') {
+            const chainId = btn.dataset.chain;
+            let res = null;
+            if (g.claimAchievementTier) {
+                res = g.claimAchievementTier(chainId);
+            } else if (g.storage && g.storage.claimAchievementTier) {
+                res = g.storage.claimAchievementTier(chainId);
+            }
+            if (res && res.success) {
+                try { g.sfx.win(); } catch (err) { try { g.sfx.coin(); } catch (e) {} }
+                if (this.ui && typeof this.ui.toast === 'function') {
+                    this.ui.toast(`🏆 Ранг повышен! Получено: +${res.reward} 🪙`, 'ach');
+                }
+                this.render(chainId, true);
+            }
+            return;
+        } else if (act === 'dual-barns') {
+            if (g.setDualBarns) {
+                g.setDualBarns(true);
+            } else if (g.storage && g.storage.setDualBarns) {
+                g.storage.setDualBarns(true);
+            } else {
+                g.save.hasDualBarns = true;
+                g.persist();
+            }
+            g.hasDualBarns = true;
+            if (g.world && typeof g.world.configureDualBarns === 'function') {
+                g.world.configureDualBarns();
+            }
+            try { g.sfx.win(); } catch (err) {}
+            if (this.ui && typeof this.ui.toast === 'function') {
+                this.ui.toast('🏡 Второй амбар активирован! (Северный и Южный амбары)', 'prestige');
+            }
+            this.render(null, true);
+            return;
+        } else if (act === 'prestige') {
             if (!g.canPrestige()) return;
             const nextPrestige = (g.save.prestige || 0) + 1;
             const nextCoins = typeof prestigeStartingCoins === 'function' ? prestigeStartingCoins(nextPrestige) : (50 + 50 * nextPrestige);
@@ -288,7 +534,11 @@ class Shop {
                     g.storage.resetPrestige(g.save);
                 }
                 g.doPrestige();
-                this.ui.closeShop();
+                if (this.ui && typeof this.ui.closeShop === 'function') {
+                    this.ui.closeShop();
+                } else {
+                    this.close();
+                }
             }
             return;
         }
