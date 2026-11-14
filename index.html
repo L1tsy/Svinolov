@@ -36,7 +36,9 @@
                     <span class="chip-ico">🪙</span>
                     <b id="hud-coins">0</b>
                 </div>
+                <button class="round-btn round-btn-solo-switch hidden" id="btn-hud-solo-switch" type="button" aria-label="В Соло" title="Переключить в Соло">👤 В Соло</button>
                 <button class="round-btn round-btn-gold" id="btn-leaderboard" type="button" aria-label="Топ игроков" title="Топ игроков">🏆</button>
+                <button class="round-btn round-btn-fullscreen" id="btn-fullscreen" type="button" aria-label="Полноэкранный режим" title="Полноэкранный режим">⛶</button>
                 <button class="round-btn" id="btn-shop" type="button" aria-label="Магазин">🛒</button>
                 <button class="round-btn" id="btn-pause" type="button" aria-label="Пауза">⏸</button>
             </div>
@@ -72,6 +74,8 @@
                 <span class="online-chip-code" id="hud-online-code">PIG-0000</span>
             </div>
 
+            <button class="btn-coop-quick-solo" id="hud-coop-to-solo" type="button" title="Быстро переключиться в Соло (1 Игрок)">👤 В Соло</button>
+
             <div class="coop-chip p2" id="coop-p2-chip">
                 <div class="coop-dash-indicator ready" id="hud-p2-dash" title="Рывок P2 (RShift / Num0)">
                     <span class="dash-icon">💨</span>
@@ -90,6 +94,36 @@
             </div>
         </div>
 
+        <!-- 1v1 Battle HUD Bar -->
+        <div id="hud-battle-bar" class="hud-battle-bar hidden">
+            <div class="battle-hud-player p1" id="battle-p1-hud">
+                <span class="battle-hud-avatar">🧑‍🌾</span>
+                <div class="battle-hud-meta">
+                    <span class="battle-hud-tag p1">P1</span>
+                    <b class="battle-hud-name" id="battle-p1-name">Фермер</b>
+                </div>
+                <div class="battle-hud-score" id="battle-p1-score">0</div>
+            </div>
+
+            <div class="battle-hud-center">
+                <div class="battle-hud-timer-badge">
+                    <span class="battle-timer-icon">⏳</span>
+                    <b class="battle-timer-secs" id="battle-timer-secs">60</b>
+                    <span class="battle-timer-unit">с</span>
+                </div>
+                <span class="battle-vs-pill">⚔️ 1v1 БИТВА</span>
+            </div>
+
+            <div class="battle-hud-player p2" id="battle-p2-hud">
+                <div class="battle-hud-score" id="battle-p2-score">0</div>
+                <div class="battle-hud-meta">
+                    <span class="battle-hud-tag p2">P2</span>
+                    <b class="battle-hud-name" id="battle-p2-name">Фермерша</b>
+                </div>
+                <span class="battle-hud-avatar">👩‍🌾</span>
+            </div>
+        </div>
+
         <div id="toasts"></div>
         <div id="banner" aria-live="polite"><div class="banner-title" id="banner-title"></div><div class="banner-sub" id="banner-sub"></div></div>
 
@@ -104,6 +138,7 @@
         <!-- Титульный экран -->
         <section id="title-screen" class="screen hidden">
             <div class="title-box">
+                <button class="round-btn title-fullscreen-btn" id="title-fullscreen" type="button" aria-label="Полноэкранный режим" title="Полноэкранный режим">⛶</button>
                 <div class="logo-pig" id="logo-pig">🐷</div>
                 <h1 class="logo"><span>СВИНОЛОВ</span></h1>
                 <p class="slogan">Лови сбежавших свиней и расширяй ферму!</p>
@@ -111,10 +146,18 @@
                     <button class="btn btn-big green" id="title-play" type="button">▶ Играть</button>
                     <button class="btn btn-mid yellow" id="title-shop" type="button">🛒 Магазин</button>
                     <button class="btn btn-mid brown" id="title-leaderboard" type="button">🏆 Топ игроков</button>
-                    <button class="btn btn-mid pink" id="title-online" type="button">🌐 Онлайн Кооп</button>
+                    <button class="btn btn-mid pink btn-online-highlight" id="title-online" type="button">🌐 Онлайн игра</button>
                 </div>
-                <div class="mode-select-wrap">
-                    <button class="btn btn-mid mode-toggle-btn" id="title-mode" type="button" title="Переключить режим игры">
+                <div class="mode-select-wrap" id="title-mode-wrap">
+                    <div class="mode-dual-wrap" id="title-mode-dual">
+                        <button class="btn btn-mid mode-btn-solo active" id="title-mode-solo" type="button" title="Режим для одного игрока">
+                            👤 1 Игрок (Соло)
+                        </button>
+                        <button class="btn btn-mid mode-btn-coop" id="title-mode-coop" type="button" title="Режим для двоих игроков">
+                            👥 2 Игрока (Кооп)
+                        </button>
+                    </div>
+                    <button class="btn btn-mid mode-toggle-btn hidden" id="title-mode" type="button" title="Переключить режим игры" style="display:none;">
                         <span class="mode-icon" id="title-mode-icon">👤</span>
                         <span id="title-mode-text">Режим: 1 Игрок</span>
                     </button>
@@ -142,6 +185,36 @@
                     <span class="star">★</span><span class="star big">★</span><span class="star">★</span>
                 </div>
                 <div class="res-caught" id="res-caught"></div>
+
+                <!-- Совместный итог (2 игрока) -->
+                <div class="res-coop-card hidden" id="res-coop-card">
+                    <div class="res-coop-head">👥 Итоги совместной охоты</div>
+                    <div class="res-coop-players">
+                        <div class="res-coop-player p1" id="res-coop-p1-box">
+                            <div class="res-player-avatar">🧑‍🌾</div>
+                            <div class="res-player-info">
+                                <b class="res-player-name">Фермер (P1)</b>
+                                <div class="res-player-stat">Поймано: <b id="res-p1-caught">0</b> 🐷</div>
+                                <div class="res-player-coins" id="res-p1-coins-box">🪙 <b id="res-p1-coins">0</b></div>
+                            </div>
+                            <div class="res-player-badge hidden" id="res-p1-badge">👑 MVP ДНЯ</div>
+                        </div>
+                        <div class="res-coop-vs">VS</div>
+                        <div class="res-coop-player p2" id="res-coop-p2-box">
+                            <div class="res-player-avatar">👩‍🌾</div>
+                            <div class="res-player-info">
+                                <b class="res-player-name">Фермерша (P2)</b>
+                                <div class="res-player-stat">Поймано: <b id="res-p2-caught">0</b> 🐷</div>
+                                <div class="res-player-coins" id="res-p2-coins-box">🪙 <b id="res-p2-coins">0</b></div>
+                            </div>
+                            <div class="res-player-badge hidden" id="res-p2-badge">👑 MVP ДНЯ</div>
+                        </div>
+                    </div>
+                    <div class="res-coop-team-stats" id="res-coop-team-stats">
+                        <span class="coop-stat-item">⚡ Командное комбо: <b id="res-coop-combo">x0</b></span>
+                    </div>
+                </div>
+
                 <div class="res-lines" id="res-lines"></div>
                 <div class="res-quest" id="res-quest"></div>
                 <div class="res-earned" id="res-earned"></div>
@@ -150,6 +223,7 @@
                 <div class="res-buttons">
                     <button class="btn btn-big green" id="res-next" type="button">Следующий день ➜</button>
                     <button class="btn btn-mid yellow" id="res-shop" type="button">🛒 Магазин</button>
+                    <button class="btn btn-mid cream" id="res-menu-btn" type="button">🏠 В главное меню</button>
                 </div>
             </div>
         </section>
@@ -176,11 +250,14 @@
                     <button class="btn toggle" id="pause-sound" type="button"></button>
                     <button class="btn toggle" id="pause-music" type="button"></button>
                 </div>
-                <div class="pause-actions-row">
+                <div class="pause-actions-grid">
                     <button class="btn btn-mid brown" id="pause-leaderboard" type="button">🏆 Топ игроков</button>
                     <button class="btn btn-mid pink" id="pause-online" type="button">🌐 Онлайн игра</button>
                     <button class="btn btn-mid cream mode-toggle-btn" id="pause-mode" type="button">👤 Режим: 1 Игрок</button>
+                    <button class="btn btn-mid yellow" id="pause-fullscreen" type="button">⛶ Полный экран</button>
                 </div>
+                <button class="btn btn-mid yellow hidden" id="pause-switch-solo" type="button" style="width: 100%; margin: 6px 0; font-weight: 800;">👤 Переключить в Соло (1 Игрок)</button>
+                <button class="btn btn-mid cream" id="pause-menu-btn" type="button" style="width: 100%; margin: 6px 0;">🏠 В главное меню</button>
                 <div class="help-card help-col">
                     <div class="help-solo" id="pause-help-solo">
                         <span><kbd>WASD</kbd> / стрелки — бег</span>
@@ -231,8 +308,8 @@
                         <thead>
                             <tr>
                                 <th class="col-rank">#</th>
-                                <th class="col-farmer">Фермер</th>
-                                <th class="col-farm">Хозяйство</th>
+                                <th class="col-farmer">Игрок</th>
+                                <th class="col-farm">Профиль / Режим</th>
                                 <th class="col-score" id="lb-score-col-header">Результат</th>
                             </tr>
                         </thead>
@@ -243,7 +320,7 @@
                 </div>
 
                 <div class="lb-footer-note">
-                    <span>💡 Улучшай ферму, делай престижи и ставь рекорды дня, чтобы обогнать соседей!</span>
+                    <span>💡 Здесь соревнуются только реальные игроки. Играйте по сети (Кооп или Битва 1v1), чтобы побить их рекорды!</span>
                 </div>
             </div>
         </section>
@@ -269,8 +346,30 @@
                 <!-- Вкладка: Создать комнату (Хост) -->
                 <div class="online-tab-content" id="content-host">
                     <div class="online-card">
-                        <div class="online-role-badge host">Игрок 1 · Фермер (Хост)</div>
-                        <p class="online-step-tip">Создайте комнату и отправьте полученный код или ссылку другу:</p>
+                        <div class="online-role-badge host">Игрок 1 · Хост комнаты</div>
+
+                        <!-- Выбор режима сетевой игры -->
+                        <div class="online-mode-select-box">
+                            <span class="online-mode-select-label">Режим игры:</span>
+                            <div class="online-mode-toggle-group" id="online-mode-toggle-group">
+                                <button class="btn-online-mode active" id="btn-mode-coop" type="button" data-mode="coop">
+                                    <span class="mode-emoji">🌾</span>
+                                    <div class="mode-info">
+                                        <b>Кооператив (Ферма)</b>
+                                        <small>2 игрока · 2 амбара · общий день</small>
+                                    </div>
+                                </button>
+                                <button class="btn-online-mode" id="btn-mode-battle" type="button" data-mode="battle">
+                                    <span class="mode-emoji">⚔️</span>
+                                    <div class="mode-info">
+                                        <b>Битва ловцов 1v1 (60 сек)</b>
+                                        <small>Равные условия · кто поймает больше!</small>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+
+                        <p class="online-step-tip">Отправьте полученный код или ссылку напарнику:</p>
                         
                         <div class="room-code-box">
                             <span class="room-code-label">КОД КОМНАТЫ:</span>
@@ -310,6 +409,53 @@
 
                 <div class="online-footer-info">
                     <span>💡 Работает напрямую между браузерами (WebRTC P2P). Не требует платных серверов и отлично работает на GitHub Pages!</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Итоги Битвы 1v1 -->
+        <section id="battle-result-modal" class="overlay hidden">
+            <div class="panel battle-result-panel">
+                <div class="battle-result-banner" id="battle-result-banner">
+                    <div class="battle-result-icon" id="battle-result-icon">👑</div>
+                    <h2 id="battle-result-title">ПОБЕДА!</h2>
+                    <p id="battle-result-desc">Вы поймали больше свиней за 60 секунд!</p>
+                </div>
+
+                <div class="battle-result-scores">
+                    <div class="battle-res-card p1" id="battle-res-card-p1">
+                        <span class="battle-res-avatar">🧑‍🌾</span>
+                        <b class="battle-res-name" id="battle-res-name-p1">Фермер</b>
+                        <div class="battle-res-score-box">
+                            <span class="res-score-num" id="battle-res-score-p1">0</span>
+                            <span class="res-score-lbl">свиней</span>
+                        </div>
+                        <div class="battle-res-badge winner" id="battle-res-badge-p1">👑 ПОБЕДИТЕЛЬ</div>
+                    </div>
+                    <div class="battle-res-vs">VS</div>
+                    <div class="battle-res-card p2" id="battle-res-card-p2">
+                        <span class="battle-res-avatar">👩‍🌾</span>
+                        <b class="battle-res-name" id="battle-res-name-p2">Фермерша</b>
+                        <div class="battle-res-score-box">
+                            <span class="res-score-num" id="battle-res-score-p2">0</span>
+                            <span class="res-score-lbl">свиней</span>
+                        </div>
+                        <div class="battle-res-badge" id="battle-res-badge-p2">2 МЕСТО</div>
+                    </div>
+                </div>
+
+                <div class="battle-reward-chip" id="battle-reward-chip">
+                    <span>Награда за битву:</span>
+                    <b id="battle-reward-text">+25 🪙</b>
+                </div>
+
+                <div class="battle-stats-summary" id="battle-stats-summary">
+                    <!-- Заполняется в ui.js -->
+                </div>
+
+                <div class="battle-result-buttons">
+                    <button class="btn btn-big green" id="btn-battle-rematch" type="button">⚔️ Реванш!</button>
+                    <button class="btn btn-mid yellow" id="btn-battle-exit" type="button">🏠 В главное меню</button>
                 </div>
             </div>
         </section>
