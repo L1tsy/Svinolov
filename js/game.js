@@ -146,7 +146,7 @@ class Game {
         this._spawnBarnToggle = false;
 
         if (this.ui) {
-            this.ui.onHostRoom = (customCode, mode) => this.hostOnlineGame(customCode, mode);
+            this.ui.onHostRoom = (mode, customCode) => this.hostOnlineGame(mode, customCode);
             this.ui.onJoinRoom = (code) => this.joinOnlineGame(code);
         }
 
@@ -2800,11 +2800,21 @@ class Game {
     }
 
     /* ================= Сетевой режим (WebRTC P2P на 2 устройства) ================= */
-    hostOnlineGame(customCode, mode = 'coop') {
+    hostOnlineGame(modeOrCode = 'coop', customCode = null) {
         if (!this.network) return false;
-        this.onlineMode = (mode === 'battle' || mode === 'online_battle') ? 'battle' : 'coop';
+        let mode = 'coop';
+        let code = customCode;
+        if (modeOrCode === 'coop' || modeOrCode === 'battle' || modeOrCode === 'online_battle') {
+            mode = (modeOrCode === 'battle' || modeOrCode === 'online_battle') ? 'battle' : 'coop';
+        } else if (customCode === 'coop' || customCode === 'battle' || customCode === 'online_battle') {
+            mode = (customCode === 'battle' || customCode === 'online_battle') ? 'battle' : 'coop';
+            code = modeOrCode;
+        } else {
+            code = modeOrCode;
+        }
+        this.onlineMode = mode;
         this.setMode('coop');
-        return this.network.hostRoom(customCode, this.onlineMode);
+        return this.network.hostRoom(this.onlineMode, code);
     }
 
     joinOnlineGame(code) {

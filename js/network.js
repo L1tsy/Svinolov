@@ -23,11 +23,18 @@ const STUN_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' }
 ];
 
 const PEER_CONFIG = {
     debug: 1,
+    host: '0.peerjs.com',
+    port: 443,
+    path: '/',
+    secure: true,
+    pingInterval: 5000,
     config: {
         iceServers: STUN_SERVERS,
         sdpSemantics: 'unified-plan'
@@ -90,18 +97,20 @@ class NetworkManager {
     }
 
     /**
-     * Генерирует читаемый 4-значный код комнаты (например 4821)
+     * Генерирует читаемый 5-значный код комнаты (например 58319)
      */
     static generateRoomCode() {
-        return Math.floor(1000 + Math.random() * 9000).toString();
+        return Math.floor(10000 + Math.random() * 90000).toString();
     }
 
     /**
-     * Нормализует код комнаты (удаляет пробелы, спецсимволы, переводит в верхний регистр)
+     * Нормализует код комнаты (удаляет пробелы, префиксы PIG/SVIN, спецсимволы, переводит в верхний регистр)
      */
     static cleanCode(raw) {
         if (!raw) return '';
-        return raw.toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        let s = raw.toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        s = s.replace(/^PIG/, '').replace(/^SVIN/, '');
+        return s;
     }
 
     /**
@@ -163,12 +172,30 @@ class NetworkManager {
 
     /**
      * Инициализация Хоста (Игрок 1 / Амбар 1)
+     * Поддерживает вызов hostRoom(mode, customCode) или hostRoom(customCode, mode)
      */
-    hostRoom(customCode, mode = 'coop') {
+    hostRoom(modeOrCode = 'coop', customCode = null) {
         this.disconnect();
-        const code = NetworkManager.cleanCode(customCode) || NetworkManager.generateRoomCode();
+
+        let mode = 'coop';
+        let code = null;
+
+        if (modeOrCode === 'coop' || modeOrCode === 'battle' || modeOrCode === 'online_battle') {
+            mode = (modeOrCode === 'battle' || modeOrCode === 'online_battle') ? 'battle' : 'coop';
+            code = NetworkManager.cleanCode(customCode);
+        } else if (customCode === 'coop' || customCode === 'battle' || customCode === 'online_battle') {
+            mode = (customCode === 'battle' || customCode === 'online_battle') ? 'battle' : 'coop';
+            code = NetworkManager.cleanCode(modeOrCode);
+        } else {
+            code = NetworkManager.cleanCode(modeOrCode);
+        }
+
+        if (!code) {
+            code = NetworkManager.generateRoomCode();
+        }
+
         this.roomCode = code;
-        this.onlineMode = mode || 'coop';
+        this.onlineMode = mode;
         this.isHost = true;
         this.isGuest = false;
         this.status = 'connecting';
@@ -176,6 +203,7 @@ class NetworkManager {
         this.isReconnecting = false;
 
         if (this.game.ui) {
+            this.game.ui.setHostRoomCode(code);
             this.game.ui.setHostStatus('Создание комнаты WebRTC...', false);
         }
 
@@ -188,7 +216,14 @@ class NetworkManager {
             return false;
         }
 
+        const hostTimeout = setTimeout(() => {
+            if (this.status === 'connecting' && this.isHost) {
+                this._handleError('Таймаут подключения к серверу комнат. Попробуйте еще раз.');
+            }
+        }, 15000);
+
         this.peer.on('open', (id) => {
+            clearTimeout(hostTimeout);
             this.status = 'waiting';
             if (this.game.ui) {
                 this.game.ui.setHostRoomCode(code);
@@ -210,11 +245,12 @@ class NetworkManager {
         });
 
         this.peer.on('error', (err) => {
+            clearTimeout(hostTimeout);
             console.error('[Network] Host peer error:', err);
             if (err.type === 'unavailable-id') {
                 // Если ID занят, генерируем новый код
                 const nextCode = NetworkManager.generateRoomCode();
-                this.hostRoom(nextCode, this.onlineMode);
+                this.hostRoom(this.onlineMode, nextCode);
             } else if (err.type === 'disconnected' || err.type === 'network') {
                 if (this.peer && !this.peer.destroyed) {
                     try { this.peer.reconnect(); } catch (e) {}
@@ -256,15 +292,25 @@ class NetworkManager {
             return false;
         }
 
+        let joinTimeout = null;
+
         this.peer.on('open', () => {
             const hostPeerId = this.PEER_PREFIX + code;
             this.conn = this.peer.connect(hostPeerId, {
                 reliable: true
             });
             this._setupConnection();
+
+            joinTimeout = setTimeout(() => {
+                if (this.status === 'connecting' && !this.isConnected) {
+                    this._handleError(`Комната ${code} не отвечает. Проверьте код комнаты у друга.`);
+                    this.disconnect();
+                }
+            }, 15000);
         });
 
         this.peer.on('error', (err) => {
+            if (joinTimeout) clearTimeout(joinTimeout);
             console.error('[Network] Guest peer error:', err);
             if (err.type === 'peer-unavailable') {
                 this._handleError(`Комната ${code} не найдена. Проверьте код.`);

@@ -1421,16 +1421,19 @@ body.touch #touch-ui.hidden { display: none !important; }
     .overlay { padding: 0; align-items: stretch; }
     .panel { width: 100% !important; max-height: 100%; border-radius: 0; border-width: 0; padding: calc(14px + var(--sat)) 14px calc(14px + var(--sab)); box-shadow: none; overflow-y: auto; }
     .result-panel, .pause-panel { justify-content: center; }
-    #shop-modal {
+    #shop-modal:not(.hidden) {
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
         padding: 10px !important;
     }
+    #shop-modal.hidden {
+        display: none !important;
+    }
     #shop-modal .shop-panel,
     #shop-modal .panel {
         width: min(780px, 95vw) !important;
-        height: 580px !important;
+        height: min(580px, 88vh) !important;
         max-height: 88vh !important;
         display: flex !important;
         flex-direction: column !important;

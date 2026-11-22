@@ -1278,7 +1278,9 @@ class UI {
             return;
         }
         // Заглушка, пока сетевой модуль инициализируется
-        const fallbackCode = 'PIG-' + Math.floor(1000 + Math.random() * 9000);
+        const fallbackCode = (typeof NetworkManager !== 'undefined' && NetworkManager.generateRoomCode)
+            ? NetworkManager.generateRoomCode()
+            : Math.floor(10000 + Math.random() * 90000).toString();
         this.setHostRoomCode(fallbackCode);
         this.setHostStatus(mode === 'battle' ? 'Ожидание соперника для 1v1 Битвы...' : 'Ожидание подключения второго игрока (Фермерши)...');
         this.toast('🌐', 'Комната создана!', `Режим: ${mode === 'battle' ? '1v1 Битва' : 'Кооператив'} · Код: ${fallbackCode}`);
@@ -1286,25 +1288,28 @@ class UI {
 
     _onJoinClicked() {
         const inp = this.el.joinCodeInput;
-        const code = inp ? inp.value.trim().toUpperCase() : '';
+        const code = inp ? inp.value.trim() : '';
         if (!code) {
             this.setJoinStatus('Пожалуйста, введите код комнаты!', false, true);
             return;
         }
-        this.setJoinStatus(`Подключение к комнате ${code}...`);
+        const cleanCode = (typeof NetworkManager !== 'undefined' && NetworkManager.cleanCode)
+            ? NetworkManager.cleanCode(code)
+            : code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        this.setJoinStatus(`Подключение к комнате ${cleanCode}...`);
         if (typeof this.onJoinRoom === 'function') {
-            this.onJoinRoom(code);
+            this.onJoinRoom(cleanCode);
             return;
         }
         if (this.game.network && typeof this.game.network.joinRoom === 'function') {
-            this.game.network.joinRoom(code);
+            this.game.network.joinRoom(cleanCode);
             return;
         }
         if (typeof this.game.joinOnlineGame === 'function') {
-            this.game.joinOnlineGame(code);
+            this.game.joinOnlineGame(cleanCode);
             return;
         }
-        this.toast('🌐', 'Подключение...', `Подключаемся к ${code}`);
+        this.toast('🌐', 'Подключение...', `Подключаемся к ${cleanCode}`);
     }
 
     _checkUrlJoinParam() {
