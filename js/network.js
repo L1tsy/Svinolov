@@ -18,35 +18,49 @@
  * 7. Обмен профилями игроков (никнейм, шляпа, статы) для записи реальных игроков в таблицу рекордов.
  */
 
-// Предотвращение ложного срабатывания "The current browser does not support WebRTC" в Chrome
-try {
-    if (typeof window !== 'undefined') {
+// Функция принудительного включения поддержки WebRTC при наличии блокировок в браузере или VPN
+function ensureWebRTCSupport() {
+    if (typeof window === 'undefined') return;
+    try {
         if (!window.RTCPeerConnection && (window.webkitRTCPeerConnection || window.mozRTCPeerConnection)) {
             window.RTCPeerConnection = window.webkitRTCPeerConnection || window.mozRTCPeerConnection;
         }
-        if (window.peerjs && window.peerjs.util && typeof RTCPeerConnection !== 'undefined') {
-            const sup = window.peerjs.util.supports;
-            if (sup) {
-                sup.webRTC = true;
-                sup.data = true;
-                sup.audioVideo = true;
-                sup.browser = true;
-                sup.reliable = true;
-            }
+        const p = window.peerjs || window.Peer;
+        if (p && p.util && p.util.supports) {
+            p.util.supports.webRTC = true;
+            p.util.supports.data = true;
+            p.util.supports.audioVideo = true;
+            p.util.supports.browser = true;
+            p.util.supports.reliable = true;
         }
+    } catch (e) {
+        console.warn('[Network] ensureWebRTCSupport note:', e);
     }
-} catch (e) {
-    console.warn('[Network] Supports bypass note:', e);
 }
+ensureWebRTCSupport();
 
-// Список надежных публичных STUN-серверов
-const STUN_SERVERS = [
+// Список надежных STUN и TURN серверов для бесперебойной работы через VPN, NAT и файрволы
+const ICE_SERVERS = [
+    // 1. Быстрые STUN серверы Google и Cloudflare (прямое P2P соединение при стандартном NAT)
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' }
+    { urls: 'stun:stun.cloudflare.com:3478' },
+
+    // 2. Публичные надежные TURN-релеи OpenRelay (порты 80, 443 UDP и TCP)
+    // Позволяют устанавливать соединение даже при активном VPN, мобильном интернете (CGNAT)
+    // и строгом симметричном NAT (трафик идет через защищенный порт 443 как обычный HTTPS)
+    {
+        urls: [
+            'turn:openrelay.metered.ca:80',
+            'turn:openrelay.metered.ca:443',
+            'turn:openrelay.metered.ca:443?transport=tcp'
+        ],
+        username: 'openrelay',
+        credential: 'openrelay'
+    }
 ];
 
 const PEER_CONFIG = {
@@ -57,8 +71,9 @@ const PEER_CONFIG = {
     secure: true,
     pingInterval: 5000,
     config: {
-        iceServers: STUN_SERVERS,
-        sdpSemantics: 'unified-plan'
+        iceServers: ICE_SERVERS,
+        sdpSemantics: 'unified-plan',
+        iceCandidatePoolSize: 10
     }
 };
 
@@ -230,10 +245,11 @@ class NetworkManager {
 
         const peerId = this.PEER_PREFIX + code;
         try {
+            ensureWebRTCSupport();
             this.peer = new Peer(peerId, PEER_CONFIG);
         } catch (e) {
             console.error('[Network] Peer init error:', e);
-            this._handleError('Не удалось запустить сетевой сервис PeerJS');
+            this._handleError('Не удалось запустить WebRTC. Если включен VPN, отключите в нём опцию «WebRTC Leak Protection».');
             return false;
         }
 
@@ -306,10 +322,11 @@ class NetworkManager {
         }
 
         try {
+            ensureWebRTCSupport();
             this.peer = new Peer(PEER_CONFIG);
         } catch (e) {
             console.error('[Network] Peer init error:', e);
-            this._handleError('Не удалось запустить сетевой сервис PeerJS');
+            this._handleError('Не удалось запустить WebRTC. Если включен VPN, отключите в нём опцию «WebRTC Leak Protection».');
             return false;
         }
 
@@ -318,7 +335,8 @@ class NetworkManager {
         this.peer.on('open', () => {
             const hostPeerId = this.PEER_PREFIX + code;
             this.conn = this.peer.connect(hostPeerId, {
-                reliable: true
+                reliable: true,
+                serialization: 'json'
             });
             this._setupConnection();
 
@@ -349,7 +367,27 @@ class NetworkManager {
     _setupConnection() {
         if (!this.conn) return;
 
+        // Авто-восстановление ICE при разрыве или смене IP через VPN (ICE restart)
+        const bindPcEvents = () => {
+            const pc = this.conn && this.conn.peerConnection;
+            if (pc && !pc._svinIceBound) {
+                pc._svinIceBound = true;
+                pc.addEventListener('iceconnectionstatechange', () => {
+                    console.log('[Network] ICE connection state:', pc.iceConnectionState);
+                    if (pc.iceConnectionState === 'failed') {
+                        console.warn('[Network] ICE failed, attempting ICE restart with TURN relay...');
+                        if (typeof pc.restartIce === 'function') {
+                            pc.restartIce();
+                        }
+                    }
+                });
+            }
+        };
+        bindPcEvents();
+        setTimeout(bindPcEvents, 250);
+
         this.conn.on('open', () => {
+            bindPcEvents();
             this.isConnected = true;
             this.status = 'connected';
             this.isStalled = false;
