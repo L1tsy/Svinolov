@@ -260,6 +260,22 @@ class Game {
             this.player2 = null;
             this.setupPlayerVisuals(this.player, 1);
         }
+
+        if (this.isOnline) {
+            this.applyOnlinePlayerRoles();
+        }
+    }
+
+    /** Назначение сетевых ролей и флагов владения персонажами */
+    applyOnlinePlayerRoles() {
+        if (!this.isOnline) return;
+        if (this.netRole === 'guest') {
+            if (this.player) { this.player.isLocal = false; this.player.isRemote = true; }
+            if (this.player2) { this.player2.isLocal = true; this.player2.isRemote = false; }
+        } else if (this.netRole === 'host') {
+            if (this.player) { this.player.isLocal = true; this.player.isRemote = false; }
+            if (this.player2) { this.player2.isLocal = false; this.player2.isRemote = true; }
+        }
     }
 
     setupPlayerVisuals(p, id = 1) {
@@ -895,6 +911,10 @@ class Game {
             this.player2 = null;
         }
 
+        if (this.isOnline) {
+            this.applyOnlinePlayerRoles();
+        }
+
         const p = this.player;
         this.helpers.forEach((h, i) => { h.x = p.x + (i - 1) * 44; h.y = p.y + 34; h.vx = h.vy = 0; h.target = null; h.cd = U.rand(0.3, 1); });
         this.dogs.forEach((o, i) => { o.x = p.x - 44 - i * 30; o.y = p.y + 28; o.vx = o.vy = 0; o.target = null; o.rest = 0; });
@@ -1157,8 +1177,18 @@ class Game {
             this.world.triggerInteractive(p.x, p.y, reach, this);
         }
 
+        // Дружеский взмах рядом с другим игроком (без стана и без урона)
+        const otherPlayer = pNum === 1 ? this.player2 : this.player;
+        if (otherPlayer && U.dist(p.x, p.y, otherPlayer.x, otherPlayer.y) <= reach + otherPlayer.r) {
+            this.fx.dust(otherPlayer.x, otherPlayer.y + 12, 4, '#e0f2fe');
+        }
+
         if (this.isOnline && this.network) {
-            this.network.broadcastEvent('PLAYER_SWING', { p: pNum, miss: res.hits === 0, x: p.x, y: p.y });
+            // Отправляем сетевое событие только для своего локального персонажа (исключает эхо-петли)
+            const isLocal = (this.netRole === 'guest' && pNum === 2) || (this.netRole === 'host' && pNum === 1);
+            if (isLocal) {
+                this.network.broadcastEvent('PLAYER_SWING', { p: pNum, miss: res.hits === 0, x: p.x, y: p.y });
+            }
         }
         return true;
     }
@@ -2833,6 +2863,7 @@ class Game {
             || this.onlineMode
             || 'coop';
         this.onlineMode = (mode === 'battle' || mode === 'online_battle') ? 'battle' : 'coop';
+        this.applyOnlinePlayerRoles();
 
         if (role === 'guest' && initPacket) {
             this.day = initPacket.day || this.day;
@@ -3039,6 +3070,11 @@ class Game {
         if (!event) return;
         switch (event) {
             case 'PLAYER_SWING': {
+                // Игнорируем сетевые эхо-события для своего локального персонажа,
+                // чтобы не перезаписывать кулдаун и не вызывать залипание управления
+                const isLocal = (this.netRole === 'guest' && payload.p === 2) || (this.netRole === 'host' && payload.p === 1);
+                if (isLocal) break;
+
                 const target = payload.p === 2 ? this.player2 : this.player;
                 if (target) {
                     target.swing(payload.miss);
@@ -3047,6 +3083,9 @@ class Game {
                 break;
             }
             case 'PLAYER_DASH': {
+                const isLocal = (this.netRole === 'guest' && payload.p === 2) || (this.netRole === 'host' && payload.p === 1);
+                if (isLocal) break;
+
                 const target = payload.p === 2 ? this.player2 : this.player;
                 if (target) {
                     target.startDash(payload.vx, payload.vy);

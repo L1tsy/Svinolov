@@ -570,21 +570,76 @@ class UI {
     }
 
     toast(icon, title, text = '', ms = 3200) {
+        if (!this.el || !this.el.toasts) return;
+
+        // Детекция смартфона / мобильного сенсорного экрана
+        const isMobile = (typeof window !== 'undefined') && (
+            window.innerWidth < 700 ||
+            window.matchMedia('(max-width: 699px)').matches ||
+            ('ontouchstart' in window) ||
+            (document.body && document.body.classList.contains('touch'))
+        );
+
+        // Троттлинг и дедупликация: не спамим одинаковыми и сетевыми всплывашками
+        if (!this._toastHistory) this._toastHistory = new Map();
+        const now = performance.now();
+        const key = `${icon}_${title}_${text}`;
+
+        const minInterval = isMobile ? 3500 : 1500;
+        const lastTime = this._toastHistory.get(key) || 0;
+        if (now - lastTime < minInterval) return;
+        this._toastHistory.set(key, now);
+
+        // Технические сетевые уведомления троттлим строже (минимум 5 секунд)
+        if (title.includes('Задержка') || title.includes('Связь') || title.includes('Подключение') || title.includes('лаг')) {
+            const netKey = '__net_throttle__';
+            const lastNet = this._toastHistory.get(netKey) || 0;
+            if (now - lastNet < 5000) return;
+            this._toastHistory.set(netKey, now);
+        }
+
+        // Очистка старых записей
+        if (this._toastHistory.size > 40) {
+            for (const [k, t] of this._toastHistory) {
+                if (now - t > 12000) this._toastHistory.delete(k);
+            }
+        }
+
+        const host = this.el.toasts;
+
+        // На телефоне: СТРОГО максимум 1 всплывающее уведомление! Скрываем предыдущее
+        if (isMobile) {
+            while (host.firstChild) {
+                host.firstChild.remove();
+            }
+        } else {
+            while (host.children.length > 3) host.firstElementChild.remove();
+        }
+
         const t = document.createElement('div');
         t.className = 'toast';
         const ico = document.createElement('div'); ico.className = 'toast-ico'; ico.textContent = icon;
         const box = document.createElement('div');
         const ti = document.createElement('div'); ti.className = 'toast-title'; ti.textContent = title;
         box.appendChild(ti);
-        if (text) { const tx = document.createElement('div'); tx.className = 'toast-text'; tx.textContent = text; box.appendChild(tx); }
+        if (text) {
+            const tx = document.createElement('div');
+            tx.className = 'toast-text';
+            tx.textContent = text;
+            box.appendChild(tx);
+        }
         t.append(ico, box);
-        const host = this.el.toasts;
         host.appendChild(t);
-        while (host.children.length > 4) host.firstElementChild.remove();
+
+        // На мобильных время показа существенно короче (1.6с), чтобы не закрывать обзор
+        const displayDuration = isMobile ? Math.min(ms, 1600) : ms;
+
         setTimeout(() => {
             t.classList.add('out');
-            setTimeout(() => t.remove(), 360);
-        }, ms);
+            setTimeout(() => {
+                if (t.parentNode) t.remove();
+            }, 300);
+        }, displayDuration);
     }
 
     /* ============================================================

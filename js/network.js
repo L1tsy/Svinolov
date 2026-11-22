@@ -860,7 +860,7 @@ class NetworkManager {
             const p2 = this.game.player2;
             if (!p2) return;
 
-            const swingBuf = (this.game.swingBuf2 > 0 || this.game.swingBuf1 > 0 || this.game.keys.space || this.game.keys.enter);
+            const swingBuf = !!(this.game.swingBuf2 > 0 || this.game.swingBuf1 > 0 || this.game.keys.space || this.game.keys.enter || (this.game.input && this.game.input.swingHeld));
             this.sendPacket({
                 type: 'GUEST_INPUT',
                 x: Math.round(p2.x * 10) / 10,

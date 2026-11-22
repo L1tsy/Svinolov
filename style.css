@@ -1412,11 +1412,24 @@ body.touch #touch-ui.hidden { display: none !important; }
     .timer-ico { font-size: 14px; }
     .timer-track { height: 12px; }
     .timer-secs { font-size: 15px; }
-    #toasts { top: calc(96px + var(--sat)); right: calc(8px + var(--sar)); width: min(300px, calc(100vw - 134px)); }
-    .toast { padding: 6px 10px; gap: 8px; border-radius: 14px; }
-    .toast-ico { font-size: 22px; }
-    .toast-title { font-size: 14px; }
-    .toast-text { font-size: 12px; }
+    #toasts {
+        top: calc(56px + var(--sat)) !important;
+        right: calc(8px + var(--sar)) !important;
+        width: min(260px, calc(100vw - 120px)) !important;
+        max-height: 72px !important;
+        overflow: hidden !important;
+        pointer-events: none !important;
+        gap: 4px !important;
+    }
+    .toast {
+        padding: 4px 8px !important;
+        gap: 6px !important;
+        border-radius: 12px !important;
+        border-width: 2px !important;
+    }
+    .toast-ico { font-size: 18px !important; }
+    .toast-title { font-size: 13px !important; font-weight: 700; line-height: 1.15; }
+    .toast-text { font-size: 11px !important; line-height: 1.15; }
     .chip-icons { display: none; }
     .overlay { padding: 0; align-items: stretch; }
     .panel { width: 100% !important; max-height: 100%; border-radius: 0; border-width: 0; padding: calc(14px + var(--sat)) 14px calc(14px + var(--sab)); box-shadow: none; overflow-y: auto; }

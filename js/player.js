@@ -394,6 +394,10 @@ class Player {
     /** Применение сетевого снимка от напарника */
     applyNetworkState(s) {
         if (!s) return;
+        // Строгая защита: локальный игрок управляется собственным вводом и физикой,
+        // снимки применяются ИСКЛЮЧИТЕЛЬНО к удаленному аватару напарника/соперника
+        if (this.isLocal && !this.isRemote) return;
+
         this.targetX = s.x;
         this.targetY = s.y;
         this.vx = s.vx || 0;
@@ -776,15 +780,16 @@ class Player {
             w.triggerInteractive(this.x, this.y, this.r + 10, g);
         }
 
-        // Кооп взаимодействия с напарником
+        // Кооп взаимодействия с напарником (в Битве 1v1 игроки являются соперниками)
         const partner = (this.id === 1 ? g.player2 : g.player);
+        const isBattle = g && (g.onlineMode === 'battle');
         if (partner && partner !== this) {
             const dist = Math.hypot(this.x - partner.x, this.y - partner.y);
             this.synergyDist = dist;
-            this.inSynergy = dist < 170;
+            this.inSynergy = !isBattle && dist < 170;
 
-            // Снятие стана напарником при касании ("Дай пять!")
-            if (this.stun > 0 && dist < 48 && this.unstunCd <= 0) {
+            // Снятие стана напарником при касании ("Дай пять!") — только в коопе
+            if (!isBattle && this.stun > 0 && dist < 48 && this.unstunCd <= 0) {
                 this.stun = 0;
                 this.unstunCd = 2.0;
                 if (g.fx) {
@@ -796,8 +801,8 @@ class Player {
                 partner.highFiveBoost = 1.35;
             }
 
-            // Дружеское "Дай пять!" на рывке или столкновении
-            if (this.highFiveCd <= 0 && dist < 42 && (this.dashT > 0 || partner.dashT > 0 || (this.moving && partner.moving))) {
+            // Дружеское "Дай пять!" на рывке или столкновении — только в коопе
+            if (!isBattle && this.highFiveCd <= 0 && dist < 42 && (this.dashT > 0 || partner.dashT > 0 || (this.moving && partner.moving))) {
                 this.highFiveCd = 4.0;
                 partner.highFiveCd = 4.0;
                 const mx = (this.x + partner.x) / 2, my = (this.y + partner.y) / 2;
@@ -810,14 +815,16 @@ class Player {
                 partner.highFiveBoost = 1.25;
             }
 
-            // Мягкое расталкивание игроков, чтобы они не накладывались полностью
-            const minDist = this.r * 1.5;
-            if (dist < minDist && dist > 0.001) {
-                const push = (minDist - dist) * 0.5;
-                const ddx = (this.x - partner.x) / dist;
-                const ddy = (this.y - partner.y) / dist;
-                this.x += ddx * push * 0.5;
-                this.y += ddy * push * 0.5;
+            // Мягкое расталкивание игроков (только для локального игрока, чтобы не ломать сетевую интерполяцию удаленного)
+            if (!this.isRemote) {
+                const minDist = this.r * 1.5;
+                if (dist < minDist && dist > 0.001) {
+                    const push = (minDist - dist) * 0.5;
+                    const ddx = (this.x - partner.x) / dist;
+                    const ddy = (this.y - partner.y) / dist;
+                    this.x += ddx * push * 0.5;
+                    this.y += ddy * push * 0.5;
+                }
             }
         } else {
             this.inSynergy = false;
