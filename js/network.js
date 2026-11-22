@@ -18,6 +18,27 @@
  * 7. Обмен профилями игроков (никнейм, шляпа, статы) для записи реальных игроков в таблицу рекордов.
  */
 
+// Предотвращение ложного срабатывания "The current browser does not support WebRTC" в Chrome
+try {
+    if (typeof window !== 'undefined') {
+        if (!window.RTCPeerConnection && (window.webkitRTCPeerConnection || window.mozRTCPeerConnection)) {
+            window.RTCPeerConnection = window.webkitRTCPeerConnection || window.mozRTCPeerConnection;
+        }
+        if (window.peerjs && window.peerjs.util && typeof RTCPeerConnection !== 'undefined') {
+            const sup = window.peerjs.util.supports;
+            if (sup) {
+                sup.webRTC = true;
+                sup.data = true;
+                sup.audioVideo = true;
+                sup.browser = true;
+                sup.reliable = true;
+            }
+        }
+    }
+} catch (e) {
+    console.warn('[Network] Supports bypass note:', e);
+}
+
 // Список надежных публичных STUN-серверов
 const STUN_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
