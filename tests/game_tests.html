@@ -378,6 +378,47 @@
                 fakeGame.receiveNetEvent('PLAYER_SWING', { p: 2, miss: false });
                 assertEqual(p2.cd, preCd, 'Входящее сетевое эхо не сбивает локальный кулдаун игрока');
             });
+
+            test('Синхронизация завершения дня DAY_END и поимки свинки гостем GUEST_CATCH_PIG', () => {
+                let coopResultShown = false;
+                const fakeGame = {
+                    day: 1,
+                    state: 'play',
+                    paused: false,
+                    dayCaught: 4,
+                    total: 5,
+                    dayCaughtP1: 2,
+                    dayCaughtP2: 2,
+                    dayCoinsP1: 20,
+                    dayCoinsP2: 20,
+                    dayCoins: 40,
+                    coopCatchCombo: 2,
+                    netRole: 'guest',
+                    isOnline: true,
+                    sfx: { tempoMul: 1 },
+                    ui: {
+                        showCoopResult: () => { coopResultShown = true; }
+                    },
+                    receiveNetEvent: Game.prototype.receiveNetEvent
+                };
+
+                // При получении DAY_END от Хоста состояние меняется на result, игра встает на паузу и открывает окно
+                fakeGame.receiveNetEvent('DAY_END', {
+                    day: 1,
+                    dayCaught: 5,
+                    total: 5,
+                    dayCaughtP1: 2,
+                    dayCaughtP2: 3,
+                    dayCoins: 50,
+                    coopCatchCombo: 3,
+                    resultData: { day: 1, stars: 3 }
+                });
+
+                assertEqual(fakeGame.state, 'result', 'Состояние игры синхронизировано в result');
+                assert(fakeGame.paused, 'Игра приостановлена');
+                assertEqual(fakeGame.dayCaught, 5, 'dayCaught обновлен');
+                assert(coopResultShown, 'Окно результатов дня показано гостю синхронно с хостом');
+            });
         });
 
         // =========================================================================

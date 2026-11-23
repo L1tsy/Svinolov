@@ -1397,6 +1397,15 @@ class Game {
                     combo: this.combo,
                     coopCombo: this.coopCatchCombo
                 });
+            } else if (this.netRole === 'guest') {
+                this.network.broadcastEvent('GUEST_CATCH_PIG', {
+                    pigIdx: pig._netIdx !== undefined ? pig._netIdx : -1,
+                    pigType: pig.type,
+                    x: Math.round(pig.x),
+                    y: Math.round(pig.y),
+                    reward,
+                    combo: this.combo
+                });
             }
         }
     }
@@ -1545,6 +1554,13 @@ class Game {
         this.fx.addFlash('#fff6c0', 0.3);
         this.ui.banner('Все свиньи пойманы!', '', 1500);
         for (const p of this.pigs) if (p && p.active && p.state !== 'escape') p.beginEscape(this.world);
+        if (this.isOnline && this.network) {
+            if (this.netRole === 'host') {
+                this.network.broadcastEvent('VICTORY', { day: this.day });
+            } else if (this.netRole === 'guest') {
+                this.network.broadcastEvent('REQUEST_DAY_END', { day: this.day, dayCaught: this.dayCaught });
+            }
+        }
     }
 
     timeUp() {
@@ -1558,6 +1574,9 @@ class Game {
         this.sfx.tempoMul = 1;
         this.ui.banner('Солнце село!', '', 1500);
         for (const p of this.pigs) if (p && p.active && p.state !== 'escape') p.beginEscape(this.world);
+        if (this.isOnline && this.network && this.netRole === 'host') {
+            this.network.broadcastEvent('TIME_UP', { day: this.day });
+        }
     }
 
     /**
@@ -1700,6 +1719,22 @@ class Game {
                 } else if (typeof this.ui.showResult === 'function') {
                     this.ui.showResult(resultData);
                 }
+            }
+
+            // Гарантированная синхронизация завершения дня по сети для обоих игроков
+            if (this.isOnline && this.network && this.netRole === 'host') {
+                this.network.broadcastEvent('DAY_END', {
+                    resultData,
+                    day: this.day,
+                    dayCaught: this.dayCaught,
+                    total: this.total,
+                    dayCaughtP1: this.dayCaughtP1,
+                    dayCaughtP2: this.dayCaughtP2,
+                    dayCoinsP1: this.dayCoinsP1,
+                    dayCoinsP2: this.dayCoinsP2,
+                    dayCoins: this.dayCoins,
+                    coopCatchCombo: this.coopCatchCombo
+                });
             }
         } catch (err) {
             console.error('Error in endDay:', err);
@@ -3020,7 +3055,9 @@ class Game {
         }
 
         if (pkt.pigs && Array.isArray(pkt.pigs)) {
+            const validNetIndices = new Set();
             for (const sp of pkt.pigs) {
+                validNetIndices.add(sp.i);
                 let pig = this.pigs.find(p => p._netIdx === sp.i || (p.type === sp.t && Math.hypot(p.x - sp.x, p.y - sp.y) < 120));
                 if (!pig) {
                     pig = new Pig(sp.t, sp.x, sp.y, this.day);
@@ -3044,6 +3081,14 @@ class Game {
                     pig.catchTo(sp.tx || door.x, sp.ty || door.y);
                 }
                 if (sp.ft !== undefined) pig.flyT = sp.ft;
+            }
+            // Убираем фантомных свинок, которые на хосте уже зашли в амбар
+            for (let k = this.pigs.length - 1; k >= 0; k--) {
+                const p = this.pigs[k];
+                if (p._netIdx !== undefined && !validNetIndices.has(p._netIdx) && !p.caught) {
+                    p.inBarn = true;
+                    p.active = false;
+                }
             }
         }
 
@@ -3126,6 +3171,82 @@ class Game {
             case 'RETRY_DAY': {
                 if (this.ui) this.ui.hideResult();
                 this.startDay(payload.day || this.day);
+                break;
+            }
+            case 'GUEST_CATCH_PIG': {
+                if (this.netRole !== 'host') break;
+                let targetPig = null;
+                if (payload.pigIdx !== undefined && payload.pigIdx >= 0) {
+                    targetPig = this.pigs.find(p => p._netIdx === payload.pigIdx && !p.caught && !p.inBarn);
+                }
+                if (!targetPig && payload.x !== undefined && payload.y !== undefined) {
+                    let bestD = 220;
+                    for (const p of this.pigs) {
+                        if (p.caught || p.inBarn || !p.active) continue;
+                        const d = U.dist(p.x, p.y, payload.x, payload.y);
+                        if (d < bestD) { bestD = d; targetPig = p; }
+                    }
+                }
+                if (targetPig) {
+                    this.catchPig(targetPig, this.player2);
+                } else {
+                    this.dayCaught++;
+                    this.dayCaughtP2++;
+                    const rew = payload.reward || 5;
+                    this.addCoins(rew);
+                    this.dayCoinsP2 += rew;
+                }
+                break;
+            }
+            case 'REQUEST_DAY_END': {
+                if (this.netRole !== 'host') break;
+                if (this.state === 'play' || this.state === 'intro') {
+                    if (this.dayCaught > 0) this.victory();
+                    else this.timeUp();
+                }
+                break;
+            }
+            case 'VICTORY': {
+                if (this.state !== 'ending' && this.state !== 'result' && this.state !== 'battle_result') {
+                    this.victory();
+                }
+                break;
+            }
+            case 'TIME_UP': {
+                if (this.state !== 'ending' && this.state !== 'result' && this.state !== 'battle_result') {
+                    this.timeUp();
+                }
+                break;
+            }
+            case 'DAY_END': {
+                this.state = 'result';
+                this.paused = true;
+                this.sfx.tempoMul = 1;
+                if (payload.dayCaught !== undefined) this.dayCaught = payload.dayCaught;
+                if (payload.total !== undefined) this.total = payload.total;
+                if (payload.dayCaughtP1 !== undefined) this.dayCaughtP1 = payload.dayCaughtP1;
+                if (payload.dayCaughtP2 !== undefined) this.dayCaughtP2 = payload.dayCaughtP2;
+                if (payload.dayCoinsP1 !== undefined) this.dayCoinsP1 = payload.dayCoinsP1;
+                if (payload.dayCoinsP2 !== undefined) this.dayCoinsP2 = payload.dayCoinsP2;
+                if (payload.dayCoins !== undefined) this.dayCoins = payload.dayCoins;
+                if (payload.coopCatchCombo !== undefined) this.coopCatchCombo = payload.coopCatchCombo;
+                if (this.ui) {
+                    if (payload.resultData && typeof this.ui.showCoopResult === 'function') {
+                        this.ui.showCoopResult(payload.resultData);
+                    } else if (typeof this.ui.showResult === 'function') {
+                        this.ui.showResult(payload.resultData || {
+                            day: this.day || 1,
+                            stars: 1,
+                            failed: false,
+                            caught: this.dayCaught || 0,
+                            total: this.total || 0,
+                            lines: [],
+                            earned: this.dayCoins || 0,
+                            mode: 'coop',
+                            isCoop: true
+                        });
+                    }
+                }
                 break;
             }
             case 'BATTLE_START': {
