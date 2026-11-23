@@ -861,6 +861,16 @@ class NetworkManager {
     }
 
     /**
+     * Запрос реванша в 1v1 Battle Mode
+     */
+    requestBattleRematch() {
+        this.broadcastEvent('BATTLE_REMATCH', {});
+        if (this.game && typeof this.game.rematchBattle === 'function') {
+            this.game.rematchBattle();
+        }
+    }
+
+    /**
      * Запуск вещания авторитетного состояния Хостом (~25Hz, 40мс)
      */
     _startHostSyncLoop() {

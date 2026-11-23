@@ -389,6 +389,8 @@ class UI {
                     this.game.network.requestBattleRematch();
                 } else if (typeof this.game.restartBattle === 'function') {
                     this.game.restartBattle();
+                } else if (typeof this.game.rematchBattle === 'function') {
+                    this.game.rematchBattle();
                 }
             });
         }

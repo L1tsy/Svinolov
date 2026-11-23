@@ -2119,6 +2119,10 @@ class Game {
         this.startBattle();
     }
 
+    restartBattle() {
+        return this.rematchBattle();
+    }
+
     exitBattle() {
         this.hideBattleResult();
         const bar = document.getElementById('hud-battle-bar');
@@ -3144,6 +3148,8 @@ class Game {
                 if (this.onlineMode === 'battle') {
                     if (payload.p1Score !== undefined) this.battleP1Score = payload.p1Score;
                     if (payload.p2Score !== undefined) this.battleP2Score = payload.p2Score;
+                    this.dayCaughtP1 = this.battleP1Score;
+                    this.dayCaughtP2 = this.battleP2Score;
                     this.updateBattleHud();
                     if (this.netRole === 'host') this.spawnBattlePig();
                 } else if (payload.coopCombo > 1) {
@@ -3192,6 +3198,22 @@ class Game {
                 } else {
                     this.dayCaught++;
                     this.dayCaughtP2++;
+                    if (this.onlineMode === 'battle') {
+                        this.battleP2Score++;
+                        this.dayCaughtP1 = this.battleP1Score;
+                        this.dayCaughtP2 = this.battleP2Score;
+                        this.spawnBattlePig();
+                        this.updateBattleHud();
+                        if (this.isOnline && this.network) {
+                            this.network.broadcastEvent('PIG_CAUGHT', {
+                                catcher: 2,
+                                p1Score: this.battleP1Score,
+                                p2Score: this.battleP2Score,
+                                reward: payload.reward || 5,
+                                combo: this.combo
+                            });
+                        }
+                    }
                     const rew = payload.reward || 5;
                     this.addCoins(rew);
                     this.dayCoinsP2 += rew;

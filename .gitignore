@@ -1,3 +1,10 @@
 .claude/
 log_dev.md
 memory.md
+.chrome-profile/
+.edge-profile/
+tests/*.log
+tests/*.json
+tests/*.txt
+tests/*.py
+tests/*.ps1
